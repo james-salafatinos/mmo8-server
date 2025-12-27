@@ -166,6 +166,21 @@ export class NetworkManager {
         this.socket.emit('chat', { message, recipient });
     }
 
+    // Combat
+    sendAttack(targetUserId) {
+        console.log('NetworkManager.sendAttack:', targetUserId);
+        this.socket.emit('attack', { targetUserId });
+    }
+
+    // Leaderboard
+    getLeaderboard() {
+        return new Promise((resolve) => {
+            this.socket.emit('getLeaderboard', (result) => {
+                resolve(result);
+            });
+        });
+    }
+
     // Callback setters
     onLogin(callback) { this.callbacks.onLogin = callback; }
     onKicked(callback) { this.callbacks.onKicked = callback; }

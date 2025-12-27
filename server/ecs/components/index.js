@@ -78,3 +78,25 @@ export class Network {
         return { lastUpdate: this.lastUpdate };
     }
 }
+
+// Combat component - combat stats and state
+export class Combat {
+    constructor(hitpoints = 10, maxHitpoints = 10, strength = 1) {
+        this.hitpoints = hitpoints;
+        this.maxHitpoints = maxHitpoints;
+        this.strength = strength;
+        this.inCombat = false;
+        this.targetEntityId = null;
+        this.lastAttackTime = 0;
+        this.attackCooldown = 1000; // 1 second between attacks
+    }
+
+    serialize() {
+        return {
+            hitpoints: this.hitpoints,
+            maxHitpoints: this.maxHitpoints,
+            strength: this.strength,
+            inCombat: this.inCombat
+        };
+    }
+}

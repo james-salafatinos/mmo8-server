@@ -15,6 +15,8 @@ export class InputManager {
         this.isLongPress = false;
         this.longPressThreshold = 200; // 0.2 seconds in ms
         this.longPressTimer = null;
+        this.isDragging = false; // Single finger drag for orbit
+        this.dragThreshold = 10; // pixels before drag starts
         
         // Two-finger gesture state
         this.isTwoFingerMode = false;
@@ -150,12 +152,29 @@ export class InputManager {
             // Reset cooldown
             clearTimeout(this.twoFingerTimeout);
         } else if (e.touches.length === 1 && !this.wasInTwoFingerMode) {
-            // If moved too much, cancel long-press
+            // Single finger drag for orbit
             const touch = e.touches[0];
             const dx = touch.clientX - this.touchStartPos.x;
             const dy = touch.clientY - this.touchStartPos.y;
-            if (Math.sqrt(dx*dx + dy*dy) > 10) {
+            const distance = Math.sqrt(dx*dx + dy*dy);
+            
+            if (distance > this.dragThreshold) {
+                // Cancel long-press and enter drag mode
                 clearTimeout(this.longPressTimer);
+                this.isDragging = true;
+                
+                // Calculate delta from last position
+                const deltaX = touch.clientX - this.touchStartPos.x;
+                const deltaY = touch.clientY - this.touchStartPos.y;
+                
+                // Update camera orbit
+                this.cameraAngle -= deltaX * 0.01;
+                this.cameraPitch = Math.max(this.minPitch, Math.min(this.maxPitch, this.cameraPitch + deltaY * 0.15));
+                
+                this.game.updateCameraOrbit(this.cameraDistance, this.cameraAngle, this.cameraPitch);
+                
+                // Update start position for next delta
+                this.touchStartPos = { x: touch.clientX, y: touch.clientY };
             }
         }
     }
@@ -188,13 +207,14 @@ export class InputManager {
             if (this.isLongPress) {
                 // Long press = right-click action
                 this.handleRightClick(touch);
-            } else {
-                // Quick tap = move
+            } else if (!this.isDragging) {
+                // Quick tap = move (only if not dragging)
                 this.handleTap(touch);
             }
         }
         
         this.isLongPress = false;
+        this.isDragging = false;
     }
     
     // Calculate distance between two touch points
@@ -325,6 +345,15 @@ export class InputManager {
                 label: `👤 ${hitPlayer.username}`,
                 type: 'player',
                 action: () => console.log('Selected player:', hitPlayer.username)
+            });
+            items.push({
+                label: '⚔️ Attack',
+                type: 'player',
+                action: () => {
+                    console.log('Attacking player:', hitPlayer.userId, hitPlayer.username);
+                    this.networkManager.sendAttack(hitPlayer.userId);
+                    this.hideContextMenu();
+                }
             });
             items.push({
                 label: '💬 Whisper',

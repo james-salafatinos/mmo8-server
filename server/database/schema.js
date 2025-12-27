@@ -20,10 +20,37 @@ export function initializeDatabase(db) {
             x REAL DEFAULT 0,
             y REAL DEFAULT 0.5,
             z REAL DEFAULT 0,
+            hitpoints INTEGER DEFAULT 10,
+            max_hitpoints INTEGER DEFAULT 10,
+            strength INTEGER DEFAULT 1,
             last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     `);
+
+    // Migration: Add combat columns if they don't exist
+    try {
+        const columns = db.prepare("PRAGMA table_info(player_state)").all();
+        const columnNames = columns.map(col => col.name);
+        
+        if (!columnNames.includes('hitpoints')) {
+            db.exec(`ALTER TABLE player_state ADD COLUMN hitpoints INTEGER DEFAULT 10`);
+        }
+        if (!columnNames.includes('max_hitpoints')) {
+            db.exec(`ALTER TABLE player_state ADD COLUMN max_hitpoints INTEGER DEFAULT 10`);
+        }
+        if (!columnNames.includes('strength')) {
+            db.exec(`ALTER TABLE player_state ADD COLUMN strength INTEGER DEFAULT 1`);
+        }
+        if (!columnNames.includes('kills')) {
+            db.exec(`ALTER TABLE player_state ADD COLUMN kills INTEGER DEFAULT 0`);
+        }
+        if (!columnNames.includes('deaths')) {
+            db.exec(`ALTER TABLE player_state ADD COLUMN deaths INTEGER DEFAULT 0`);
+        }
+    } catch (err) {
+        console.error('Migration error:', err);
+    }
 
     // Messages table - chat history
     db.exec(`
@@ -70,6 +97,25 @@ export function createStatements(db) {
         `),
         updatePlayerState: db.prepare(`
             UPDATE player_state SET x = ?, y = ?, z = ?, last_seen = CURRENT_TIMESTAMP WHERE user_id = ?
+        `),
+        updatePlayerStats: db.prepare(`
+            UPDATE player_state SET hitpoints = ?, strength = ? WHERE user_id = ?
+        `),
+        healPlayer: db.prepare(`
+            UPDATE player_state SET hitpoints = max_hitpoints WHERE user_id = ?
+        `),
+        incrementKills: db.prepare(`
+            UPDATE player_state SET kills = kills + 1 WHERE user_id = ?
+        `),
+        incrementDeaths: db.prepare(`
+            UPDATE player_state SET deaths = deaths + 1 WHERE user_id = ?
+        `),
+        getLeaderboard: db.prepare(`
+            SELECT u.username, p.kills, p.deaths 
+            FROM player_state p 
+            JOIN users u ON p.user_id = u.id 
+            ORDER BY p.kills DESC, p.deaths ASC 
+            LIMIT 10
         `),
 
         // Message operations

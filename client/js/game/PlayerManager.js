@@ -5,7 +5,7 @@ export class PlayerManager {
     constructor(scene, userData) {
         this.scene = scene;
         this.localUserId = userData.user.id;
-        this.players = new Map(); // userId -> { mesh, label, chatBubble, data, targetPos }
+        this.players = new Map(); // userId -> { mesh, label, healthBar, chatBubble, data, targetPos }
         this.chatBubbleDuration = 5000; // 5 seconds
     }
 
@@ -40,10 +40,19 @@ export class PlayerManager {
             this.players.set(playerData.userId, player);
             this.scene.add(player.mesh);
             this.scene.add(player.label);
+            this.scene.add(player.healthBar);
         }
 
         // Update target position for interpolation
         player.targetPos = new THREE.Vector3(playerData.x, playerData.y, playerData.z);
+        
+        // Update health bar only if HP actually changed
+        const oldHp = player.data?.hitpoints;
+        const newHp = playerData.hitpoints;
+        if (newHp !== undefined && newHp !== oldHp) {
+            this.updateHealthBar(player, newHp, playerData.max_hitpoints || 10);
+        }
+        
         player.data = playerData;
 
         // If moving, also track the server's target
@@ -75,39 +84,128 @@ export class PlayerManager {
         const label = this.createLabel(playerData.username, playerData.color);
         label.position.set(playerData.x, playerData.y + 1.2, playerData.z);
 
+        // Create health bar
+        const healthBar = this.createHealthBar(playerData.hitpoints || 10, playerData.max_hitpoints || 10);
+        healthBar.position.set(playerData.x, playerData.y + 1.8, playerData.z);
+
         return {
             mesh,
             label,
+            healthBar,
             data: playerData,
             targetPos: new THREE.Vector3(playerData.x, playerData.y, playerData.z),
             serverTarget: null
         };
     }
 
-    createLabel(text, color) {
+    createLabel(text, color, chatMessage = null) {
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
-        canvas.width = 256;
-        canvas.height = 64;
+        canvas.width = 512;
+        canvas.height = chatMessage ? 128 : 64;
 
         // Draw background
         context.fillStyle = 'rgba(0, 0, 0, 0.5)';
         context.roundRect(0, 0, canvas.width, canvas.height, 8);
         context.fill();
 
-        // Draw text
-        context.font = 'bold 32px Arial';
+        // Draw username
+        context.font = 'bold 28px Arial';
         context.textAlign = 'center';
         context.textBaseline = 'middle';
         context.fillStyle = color;
-        context.fillText(text, canvas.width / 2, canvas.height / 2);
+        const yPos = chatMessage ? 28 : canvas.height / 2;
+        context.fillText(text, canvas.width / 2, yPos);
+        
+        // Draw chat message if provided
+        if (chatMessage) {
+            context.font = '24px Arial';
+            context.fillStyle = '#ffffff';
+            
+            // Word wrap chat message
+            const maxWidth = canvas.width - 20;
+            const words = chatMessage.split(' ');
+            let line = '';
+            let y = 70;
+            
+            for (const word of words) {
+                const testLine = line + (line ? ' ' : '') + word;
+                const metrics = context.measureText(testLine);
+                if (metrics.width > maxWidth && line) {
+                    context.fillText(line, canvas.width / 2, y);
+                    line = word;
+                    y += 28;
+                } else {
+                    line = testLine;
+                }
+            }
+            context.fillText(line, canvas.width / 2, y);
+        }
 
         const texture = new THREE.CanvasTexture(canvas);
         const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
         const sprite = new THREE.Sprite(spriteMaterial);
-        sprite.scale.set(2, 0.5, 1);
+        sprite.scale.set(chatMessage ? 4 : 2, chatMessage ? 1 : 0.5, 1);
 
         return sprite;
+    }
+
+    createHealthBar(currentHp, maxHp) {
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = 128;
+        canvas.height = 16;
+
+        // Background
+        context.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Health bar fill
+        const hpPercentage = currentHp / maxHp;
+        const fillWidth = (canvas.width - 4) * hpPercentage;
+        
+        // Color based on HP percentage
+        if (hpPercentage > 0.5) {
+            context.fillStyle = '#44ff44';
+        } else if (hpPercentage > 0.25) {
+            context.fillStyle = '#ffaa44';
+        } else {
+            context.fillStyle = '#ff4444';
+        }
+        
+        context.fillRect(2, 2, fillWidth, canvas.height - 4);
+
+        // Border
+        context.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+        context.lineWidth = 2;
+        context.strokeRect(0, 0, canvas.width, canvas.height);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+        const sprite = new THREE.Sprite(spriteMaterial);
+        sprite.scale.set(1, 0.125, 1);
+
+        return sprite;
+    }
+
+    updateHealthBar(player, currentHp, maxHp) {
+        console.log('updateHealthBar:', player.data?.username, currentHp, '/', maxHp);
+        
+        // Remove old health bar if exists
+        if (player.healthBar) {
+            this.scene.remove(player.healthBar);
+            player.healthBar.material.map.dispose();
+            player.healthBar.material.dispose();
+        }
+
+        // Create new health bar with updated HP
+        player.healthBar = this.createHealthBar(currentHp, maxHp);
+        player.healthBar.position.set(
+            player.mesh.position.x,
+            player.mesh.position.y + 1.8,
+            player.mesh.position.z
+        );
+        this.scene.add(player.healthBar);
     }
 
     update(deltaTime) {
@@ -123,6 +221,15 @@ export class PlayerManager {
                 player.mesh.position.y + 1.2,
                 player.mesh.position.z
             );
+            
+            // Update health bar position
+            if (player.healthBar) {
+                player.healthBar.position.set(
+                    player.mesh.position.x,
+                    player.mesh.position.y + 1.8,
+                    player.mesh.position.z
+                );
+            }
             
             // Update chat bubble position if exists
             if (player.chatBubble) {
@@ -144,6 +251,13 @@ export class PlayerManager {
             player.mesh.material.dispose();
             player.label.material.map.dispose();
             player.label.material.dispose();
+            
+            // Clean up health bar
+            if (player.healthBar) {
+                this.scene.remove(player.healthBar);
+                player.healthBar.material.map.dispose();
+                player.healthBar.material.dispose();
+            }
             
             // Clean up chat bubble if exists
             if (player.chatBubble) {
@@ -177,41 +291,55 @@ export class PlayerManager {
         return null;
     }
 
-    // Show a chat message above a player's head
+    // Show a chat message above a player's head by replacing label temporarily
     showChatBubble(userId, message) {
         // Try both number and string keys (senderId type may vary)
         let player = this.players.get(userId);
         if (!player) player = this.players.get(Number(userId));
         if (!player) player = this.players.get(String(userId));
         
-        console.log('showChatBubble:', userId, 'found:', !!player, 'keys:', [...this.players.keys()]);
         if (!player) return;
 
-        // Remove existing chat bubble if any
-        if (player.chatBubble) {
-            this.scene.remove(player.chatBubble);
-            player.chatBubble.material.map.dispose();
-            player.chatBubble.material.dispose();
-            clearTimeout(player.chatBubbleTimeout);
+        // Clear existing timeout if any
+        if (player.chatTimeout) {
+            clearTimeout(player.chatTimeout);
         }
 
-        // Create chat bubble sprite - position well above the name label
-        player.chatBubble = this.createChatBubble(message);
-        player.chatBubble.position.set(
+        // Store original label if not already stored
+        if (!player.originalLabel) {
+            player.originalLabel = player.label;
+        }
+
+        // Remove current label
+        this.scene.remove(player.label);
+        player.label.material.map.dispose();
+        player.label.material.dispose();
+
+        // Create new label with chat message
+        player.label = this.createLabel(player.data.username, player.data.color, message);
+        player.label.position.set(
             player.mesh.position.x,
-            player.mesh.position.y + 6.8,
+            player.mesh.position.y + 1.2,
             player.mesh.position.z
         );
-        this.scene.add(player.chatBubble);
+        this.scene.add(player.label);
 
-        // Auto-remove after duration
-        player.chatBubbleTimeout = setTimeout(() => {
-            if (player.chatBubble) {
-                this.scene.remove(player.chatBubble);
-                player.chatBubble.material.map.dispose();
-                player.chatBubble.material.dispose();
-                player.chatBubble = null;
-            }
+        // Auto-restore original label after duration
+        player.chatTimeout = setTimeout(() => {
+            this.scene.remove(player.label);
+            player.label.material.map.dispose();
+            player.label.material.dispose();
+            
+            // Restore original label
+            player.label = this.createLabel(player.data.username, player.data.color);
+            player.label.position.set(
+                player.mesh.position.x,
+                player.mesh.position.y + 1.2,
+                player.mesh.position.z
+            );
+            this.scene.add(player.label);
+            player.originalLabel = null;
+            player.chatTimeout = null;
         }, this.chatBubbleDuration);
     }
 

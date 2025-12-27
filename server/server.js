@@ -11,10 +11,11 @@ import Database from 'better-sqlite3';
 // ECS imports
 import { World } from './ecs/World.js';
 import { Entity } from './ecs/Entity.js';
-import { Transform, Player, Movement, Network } from './ecs/components/index.js';
+import { Transform, Player, Movement, Network, Combat } from './ecs/components/index.js';
 import { MovementSystem } from './ecs/systems/MovementSystem.js';
 import { NetworkSystem } from './ecs/systems/NetworkSystem.js';
 import { PersistenceSystem } from './ecs/systems/PersistenceSystem.js';
+import { CombatSystem } from './ecs/systems/CombatSystem.js';
 
 // Manager imports
 import { initializeDatabase, createStatements } from './database/schema.js';
@@ -44,8 +45,10 @@ const chatManager = new ChatManager(db, statements, io);
 const world = new World();
 const networkSystem = new NetworkSystem(io);
 const persistenceSystem = new PersistenceSystem(db, statements);
+const combatSystem = new CombatSystem(world, io, statements);
 
 world.addSystem(new MovementSystem());
+world.addSystem(combatSystem);
 world.addSystem(networkSystem);
 world.addSystem(persistenceSystem);
 
@@ -80,6 +83,11 @@ function getOrCreatePlayerEntity(userId, username, color, position) {
         entity.addComponent(new Transform(position.x, position.y, position.z));
         entity.addComponent(new Player(userId, username, color));
         entity.addComponent(new Movement());
+        entity.addComponent(new Combat(
+            position.hitpoints || 10,
+            position.max_hitpoints || 10,
+            position.strength || 1
+        ));
         world.addEntity(entity);
         playerEntities.set(userId, entity.id);
     }
@@ -205,6 +213,12 @@ io.on('connection', (socket) => {
         const entity = world.getEntity(entityId);
         if (!entity) return;
 
+        // Stop combat when player manually moves
+        const combat = entity.getComponent(Combat);
+        if (combat && combat.inCombat) {
+            combatSystem.stopCombat(entity);
+        }
+
         const movement = entity.getComponent(Movement);
         if (movement) {
             movement.setTarget(data.x, 0.5, data.z);
@@ -239,6 +253,58 @@ io.on('connection', (socket) => {
             chatManager.sendGlobalMessage(userId, player.username, message.trim());
            
         }
+    });
+
+    // Handle leaderboard request
+    socket.on('getLeaderboard', (callback) => {
+        try {
+            const leaderboard = statements.getLeaderboard.all();
+            callback({ success: true, leaderboard });
+        } catch (err) {
+            console.error('Leaderboard error:', err);
+            callback({ success: false, error: 'Failed to get leaderboard' });
+        }
+    });
+
+    // Handle attack command
+    socket.on('attack', (data) => {
+        console.log('Attack event received:', data);
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) {
+            console.log('Attack: No userId for socket');
+            return;
+        }
+
+        const entityId = playerEntities.get(userId);
+        const entity = world.getEntity(entityId);
+        if (!entity) {
+            console.log('Attack: No entity for userId:', userId);
+            return;
+        }
+
+        const { targetUserId } = data;
+        console.log('Attack: targetUserId:', targetUserId, 'type:', typeof targetUserId);
+        
+        // Try both number and original type
+        let targetEntityId = playerEntities.get(targetUserId);
+        if (!targetEntityId) targetEntityId = playerEntities.get(Number(targetUserId));
+        
+        console.log('Attack: targetEntityId:', targetEntityId, 'playerEntities keys:', [...playerEntities.keys()]);
+        
+        if (!targetEntityId) {
+            console.log('Attack: No targetEntityId found');
+            return;
+        }
+
+        const targetEntity = world.getEntity(targetEntityId);
+        if (!targetEntity) {
+            console.log('Attack: No targetEntity found');
+            return;
+        }
+
+        console.log('Attack: Starting combat between', userId, 'and target entity', targetEntityId);
+        // Start combat
+        combatSystem.startCombat(entity, targetEntityId);
     });
 
     // Handle disconnect

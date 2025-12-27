@@ -1,6 +1,6 @@
 // Network System - handles broadcasting state to connected clients
 
-import { Transform, Player, Movement, Network } from '../components/index.js';
+import { Transform, Player, Movement, Network, Combat } from '../components/index.js';
 
 export class NetworkSystem {
     constructor(io) {
@@ -31,6 +31,7 @@ export class NetworkSystem {
 
             const transform = entity.getComponent(Transform);
             const movement = entity.getComponent(Movement);
+            const combat = entity.getComponent(Combat);
 
             playerStates.push({
                 id: entity.id,
@@ -42,7 +43,10 @@ export class NetworkSystem {
                 z: transform.z,
                 targetX: movement?.targetX,
                 targetZ: movement?.targetZ,
-                isMoving: movement?.isMoving || false
+                isMoving: movement?.isMoving || false,
+                hitpoints: combat?.hitpoints || 10,
+                max_hitpoints: combat?.maxHitpoints || 10,
+                strength: combat?.strength || 1
             });
         }
 
@@ -61,6 +65,7 @@ export class NetworkSystem {
 
             const transform = entity.getComponent(Transform);
             const movement = entity.getComponent(Movement);
+            const combat = entity.getComponent(Combat);
 
             playerStates.push({
                 id: entity.id,
@@ -72,7 +77,10 @@ export class NetworkSystem {
                 z: transform.z,
                 targetX: movement?.targetX,
                 targetZ: movement?.targetZ,
-                isMoving: movement?.isMoving || false
+                isMoving: movement?.isMoving || false,
+                hitpoints: combat?.hitpoints || 10,
+                max_hitpoints: combat?.maxHitpoints || 10,
+                strength: combat?.strength || 1
             });
         }
 

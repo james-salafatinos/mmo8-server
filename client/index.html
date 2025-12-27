@@ -36,13 +36,60 @@
 
     <!-- Game Screen (hidden until login) -->
     <div id="game-screen" style="display:none;">
+        <!-- Health Bar UI -->
+        <div id="health-bar-container">
+            <div id="health-bar-label">HP</div>
+            <div id="health-bar-bg">
+                <div id="health-bar-fill"></div>
+            </div>
+            <div id="health-bar-text">10/10</div>
+        </div>
+
+        <!-- Death Screen -->
+        <div id="death-screen" style="display:none;">
+            <div id="death-message">
+                <h1>You Died</h1>
+                <p>Respawning...</p>
+            </div>
+        </div>
+
+        <!-- Hit Splat Container -->
+        <div id="hit-splat-container"></div>
+
+        <!-- Leaderboard Popup -->
+        <div id="leaderboard-overlay" style="display:none;">
+            <div id="leaderboard-popup">
+                <div id="leaderboard-header">
+                    <h2>⚔️ Leaderboard</h2>
+                    <button id="leaderboard-close">✕</button>
+                </div>
+                <div id="leaderboard-content">
+                    <table id="leaderboard-table">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Player</th>
+                                <th>Kills</th>
+                                <th>Deaths</th>
+                                <th>K/D</th>
+                            </tr>
+                        </thead>
+                        <tbody id="leaderboard-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <div class="container">
             <div id="scene-container"></div>
             
             <div id="chat-container">
                 <div id="chat-header">
                     <h2>Chat</h2>
-                    <div id="user-count">0 players online</div>
+                    <div id="chat-header-right">
+                        <button id="leaderboard-btn" title="Leaderboard">🏆</button>
+                        <div id="user-count">0 online</div>
+                    </div>
                 </div>
                 <div id="chat-messages"></div>
                 <div id="chat-input-container">
