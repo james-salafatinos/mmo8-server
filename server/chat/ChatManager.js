@@ -20,6 +20,7 @@ export class ChatManager {
                 timestamp: Date.now()
             };
 
+            console.log('ChatManager broadcasting message:', chatMessage);
             this.io.emit('chatMessage', chatMessage);
             return { success: true };
         } catch (err) {

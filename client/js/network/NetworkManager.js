@@ -15,7 +15,7 @@ export class NetworkManager {
             onFullState: null,
             onPlayerJoined: null,
             onPlayerLeft: null,
-            onChatMessage: null,
+            onChatMessage: [],
             onChatHistory: null
         };
 
@@ -116,8 +116,9 @@ export class NetworkManager {
         });
 
         this.socket.on('chatMessage', (data) => {
-            if (this.callbacks.onChatMessage) {
-                this.callbacks.onChatMessage(data);
+            console.log('NetworkManager received chatMessage:', data);
+            if (this.callbacks.onChatMessage && this.callbacks.onChatMessage.length > 0) {
+                this.callbacks.onChatMessage.forEach(callback => callback(data));
             }
         });
 
@@ -189,6 +190,6 @@ export class NetworkManager {
     onFullState(callback) { this.callbacks.onFullState = callback; }
     onPlayerJoined(callback) { this.callbacks.onPlayerJoined = callback; }
     onPlayerLeft(callback) { this.callbacks.onPlayerLeft = callback; }
-    onChatMessage(callback) { this.callbacks.onChatMessage = callback; }
+    onChatMessage(callback) { this.callbacks.onChatMessage.push(callback); }
     onChatHistory(callback) { this.callbacks.onChatHistory = callback; }
 }

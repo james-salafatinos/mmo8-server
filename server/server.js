@@ -228,16 +228,24 @@ io.on('connection', (socket) => {
     // Handle chat messages
     socket.on('chat', (data) => {
         const userId = authManager.getUserId(socket.id);
-        if (!userId) return;
+        if (!userId) {
+            console.log('Chat: No userId for socket');
+            return;
+        }
 
         const entityId = playerEntities.get(userId);
         const entity = world.getEntity(entityId);
-        if (!entity) return;
+        if (!entity) {
+            console.log('Chat: No entity for userId:', userId);
+            return;
+        }
 
         const player = entity.getComponent(Player);
         const { message, recipient } = data;
 
         if (!message || !message.trim()) return;
+
+        console.log('Chat received from userId:', userId, 'username:', player.username, 'message:', message);
 
         if (recipient) {
             // Private message
@@ -250,8 +258,8 @@ io.on('connection', (socket) => {
             }
         } else {
             // Global message
+            console.log('Sending global message with senderId:', userId);
             chatManager.sendGlobalMessage(userId, player.username, message.trim());
-           
         }
     });
 

@@ -271,12 +271,20 @@ export class PlayerManager {
 
     // Show a chat message above a player's head as a separate bubble sprite
     showChatBubble(userId, message) {
+        console.log('showChatBubble called with userId:', userId, 'type:', typeof userId, 'message:', message);
+        console.log('Available players:', [...this.players.keys()]);
+        
         // Try both number and string keys (senderId type may vary)
         let player = this.players.get(userId);
         if (!player) player = this.players.get(Number(userId));
         if (!player) player = this.players.get(String(userId));
         
-        if (!player) return;
+        if (!player) {
+            console.log('showChatBubble: Player not found for userId:', userId);
+            return;
+        }
+        
+        console.log('showChatBubble: Found player:', player.data.username);
 
         // Clear existing chat bubble and timeout
         if (player.chatTimeout) {
