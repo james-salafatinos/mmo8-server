@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Simple MMO</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- Login/Register Screen -->
+    <div id="auth-screen">
+        <div id="auth-container">
+            <h1>Simple MMO</h1>
+            <div id="auth-tabs">
+                <button class="auth-tab active" data-tab="login">Login</button>
+                <button class="auth-tab" data-tab="register">Register</button>
+            </div>
+            <form id="auth-form">
+                <input type="text" id="auth-username" placeholder="Username" autocomplete="username" required>
+                <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password" required>
+                <button type="submit" id="auth-submit">Login</button>
+                <div id="auth-error"></div>
+                <div id="force-login-container" style="display:none;">
+                    <p>Already logged in elsewhere.</p>
+                    <button type="button" id="force-login-btn">Kick other session</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Context Menu (hidden until triggered) -->
+    <div id="context-menu" style="display:none;">
+        <div id="context-menu-title">Select Action</div>
+        <div id="context-menu-items"></div>
+    </div>
+
+    <!-- Game Screen (hidden until login) -->
+    <div id="game-screen" style="display:none;">
+        <div class="container">
+            <div id="scene-container"></div>
+            
+            <div id="chat-container">
+                <div id="chat-header">
+                    <h2>Chat</h2>
+                    <div id="user-count">0 players online</div>
+                </div>
+                <div id="chat-messages"></div>
+                <div id="chat-input-container">
+                    <input type="text" id="chat-input" placeholder="Message... (/w username for whisper)">
+                    <button id="send-button">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import three.js via ES modules -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+            }
+        }
+    </script>
+    
+    <!-- Socket.io client -->
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <!-- Application scripts -->
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

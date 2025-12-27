@@ -112,3 +112,8 @@ lerna-debug.log
 # System Files
 .DS_Store
 Thumbs.db
+
+# Database files
+data/*.db
+data/*.db-wal
+data/*.db-shm

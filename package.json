@@ -1,0 +1,16 @@
+{
+  "name": "mmo8-server",
+  "version": "1.0.0",
+  "description": "A simple MMO",
+  "main": "server/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "sqlite3": "^5.1.7"
+  }
+}
