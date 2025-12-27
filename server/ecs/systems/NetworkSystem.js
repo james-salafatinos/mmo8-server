@@ -21,8 +21,8 @@ export class NetworkSystem {
         }
         this.lastBroadcast = now;
 
-        // Gather all online player states
-        const playerStates = [];
+        // Group players by room
+        const playersByRoom = new Map();
         const entities = this.world.query(Transform, Player);
 
         for (const entity of entities) {
@@ -32,8 +32,15 @@ export class NetworkSystem {
             const transform = entity.getComponent(Transform);
             const movement = entity.getComponent(Movement);
             const combat = entity.getComponent(Combat);
-
-            playerStates.push({
+            
+            const roomId = player.roomId || 'default';
+            
+            if (!playersByRoom.has(roomId)) {
+                playersByRoom.set(roomId, { players: [], sockets: [] });
+            }
+            
+            const roomData = playersByRoom.get(roomId);
+            roomData.players.push({
                 id: entity.id,
                 userId: player.userId,
                 username: player.username,
@@ -48,20 +55,32 @@ export class NetworkSystem {
                 max_hitpoints: combat?.maxHitpoints || 10,
                 strength: combat?.strength || 1
             });
+            roomData.sockets.push(player.socketId);
         }
 
-        // Broadcast to all connected clients
-        this.io.emit('gameState', { players: playerStates, timestamp: now });
+        // Broadcast to each room separately - only players in same room see each other
+        for (const [roomId, roomData] of playersByRoom) {
+            for (const socketId of roomData.sockets) {
+                this.io.to(socketId).emit('gameState', { 
+                    players: roomData.players, 
+                    roomId,
+                    timestamp: now 
+                });
+            }
+        }
     }
 
-    // Send full state to a specific client
-    sendFullState(socketId) {
+    // Send full state to a specific client (only players in same room)
+    sendFullState(socketId, targetRoomId) {
         const playerStates = [];
         const entities = this.world.query(Transform, Player);
 
         for (const entity of entities) {
             const player = entity.getComponent(Player);
             if (!player.isOnline) continue;
+            
+            // Only include players in the same room
+            if (targetRoomId && player.roomId !== targetRoomId) continue;
 
             const transform = entity.getComponent(Transform);
             const movement = entity.getComponent(Movement);
@@ -84,6 +103,6 @@ export class NetworkSystem {
             });
         }
 
-        this.io.to(socketId).emit('fullState', { players: playerStates });
+        this.io.to(socketId).emit('fullState', { players: playerStates, roomId: targetRoomId });
     }
 }

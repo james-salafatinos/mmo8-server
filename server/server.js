@@ -21,6 +21,9 @@ import { CombatSystem } from './ecs/systems/CombatSystem.js';
 import { initializeDatabase, createStatements } from './database/schema.js';
 import { AuthManager } from './auth/AuthManager.js';
 import { ChatManager } from './chat/ChatManager.js';
+import { AdminManager } from './editor/AdminManager.js';
+import { RoomManager } from './editor/RoomManager.js';
+import { AssetManager } from './editor/AssetManager.js';
 
 // Get the directory name using ES modules approach
 const __filename = fileURLToPath(import.meta.url);
@@ -40,6 +43,12 @@ const statements = createStatements(db);
 // Initialize managers
 const authManager = new AuthManager(db, statements);
 const chatManager = new ChatManager(db, statements, io);
+const adminManager = new AdminManager(db, statements);
+const roomManager = new RoomManager(db, statements, io);
+const assetManager = new AssetManager();
+
+// Link chatManager to roomManager for room-based broadcasts
+chatManager.roomManager = roomManager;
 
 // Initialize ECS World
 const world = new World();
@@ -57,6 +66,9 @@ const playerEntities = new Map();
 
 // Set up static file serving from the client directory 
 app.use(express.static(join(__dirname, '../client')));
+
+// Serve assets directory for 3D models
+app.use('/assets', express.static(join(__dirname, '../assets')));
 
 // Helper: get socket ID by username
 function getSocketByUsername(username) {
@@ -120,16 +132,23 @@ io.on('connection', (socket) => {
             const player = entity.getComponent(Player);
             player.socketId = socket.id;
             player.isOnline = true;
+            
+            // Set player's room from saved state
+            const savedRoomId = result.user.current_room_id || roomManager.getRoomList()[0]?.id || 1;
+            player.roomId = savedRoomId;
+            roomManager.joinRoom(socket.id, savedRoomId);
 
             if (!entity.hasComponent(Network)) {
                 entity.addComponent(new Network(socket.id));
             }
 
-            const recentMessages = chatManager.getRecentMessages(50);
+            // Send room-specific chat history
+            const recentMessages = chatManager.getRecentMessages(50, savedRoomId);
             socket.emit('chatHistory', recentMessages);
-            networkSystem.sendFullState(socket.id);
+            networkSystem.sendFullState(socket.id, savedRoomId);
 
-            socket.broadcast.emit('playerJoined', {
+            // Notify only players in same room
+            roomManager.broadcastToRoom(savedRoomId, 'playerJoined', {
                 userId: result.user.id,
                 username: result.user.username,
                 color: result.user.color
@@ -178,21 +197,26 @@ io.on('connection', (socket) => {
             const player = entity.getComponent(Player);
             player.socketId = socket.id;
             player.isOnline = true;
+            
+            // Set player's room from saved state
+            const savedRoomId = result.user.current_room_id || roomManager.getRoomList()[0]?.id || 1;
+            player.roomId = savedRoomId;
+            roomManager.joinRoom(socket.id, savedRoomId);
 
             // Add network component
             if (!entity.hasComponent(Network)) {
                 entity.addComponent(new Network(socket.id));
             }
 
-            // Send recent chat messages
-            const recentMessages = chatManager.getRecentMessages(50);
+            // Send room-specific chat history
+            const recentMessages = chatManager.getRecentMessages(50, savedRoomId);
             socket.emit('chatHistory', recentMessages);
 
-            // Send full game state
-            networkSystem.sendFullState(socket.id);
+            // Send full game state for room
+            networkSystem.sendFullState(socket.id, savedRoomId);
 
-            // Notify others
-            socket.broadcast.emit('playerJoined', {
+            // Notify only players in same room
+            roomManager.broadcastToRoom(savedRoomId, 'playerJoined', {
                 userId: result.user.id,
                 username: result.user.username,
                 color: result.user.color
@@ -248,7 +272,7 @@ io.on('connection', (socket) => {
         console.log('Chat received from userId:', userId, 'username:', player.username, 'message:', message);
 
         if (recipient) {
-            // Private message
+            // Private message (whispers work across rooms)
             const result = chatManager.sendPrivateMessage(
                 userId, player.username, recipient, message.trim(), getSocketByUsername
             );
@@ -257,9 +281,10 @@ io.on('connection', (socket) => {
                 socket.emit('chatMessage', result.chatMessage);
             }
         } else {
-            // Global message
-            console.log('Sending global message with senderId:', userId);
-            chatManager.sendGlobalMessage(userId, player.username, message.trim());
+            // Room-based message (only visible to players in same room)
+            const playerRoomId = player.roomId || roomManager.getPlayerRoom(socket.id);
+            console.log('Sending room message with senderId:', userId, 'roomId:', playerRoomId);
+            chatManager.sendRoomMessage(userId, player.username, message.trim(), playerRoomId);
         }
     });
 
@@ -338,6 +363,167 @@ io.on('connection', (socket) => {
                 }
             }
         }
+        
+        // Leave room
+        roomManager.leaveRoom(socket.id);
+    });
+
+    // =====================
+    // EDITOR / ADMIN EVENTS
+    // =====================
+
+    // Admin authentication
+    socket.on('adminLogin', (data, callback) => {
+        const { password } = data;
+        if (!password) {
+            callback({ success: false, error: 'Password required' });
+            return;
+        }
+        const result = adminManager.authenticateAdmin(password, socket.id);
+        callback(result);
+    });
+
+    // Admin logout
+    socket.on('adminLogout', (data, callback) => {
+        const { adminToken } = data;
+        adminManager.revokeAdminToken(adminToken);
+        callback({ success: true });
+    });
+
+    // Get asset list (admin only)
+    socket.on('getAssets', (data, callback) => {
+        const { adminToken } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        callback({ success: true, assets: assetManager.getAssetsByCategory() });
+    });
+
+    // Get room list (available to all players)
+    socket.on('getRooms', (callback) => {
+        callback({ success: true, rooms: roomManager.getRoomList() });
+    });
+
+    // Get room layout (available to all players)
+    socket.on('getRoomLayout', (data, callback) => {
+        const { roomId } = data;
+        const layout = roomManager.getRoomLayout(roomId);
+        if (!layout) {
+            callback({ success: false, error: 'Room not found' });
+            return;
+        }
+        callback({ success: true, layout });
+    });
+
+    // Join room
+    socket.on('joinRoom', (data, callback) => {
+        const { roomId, skipSpawn } = data; // skipSpawn: true when re-logging in to same room
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) {
+            callback({ success: false, error: 'Not authenticated' });
+            return;
+        }
+        
+        // Check if player is already in this room (re-login case)
+        const currentRoom = roomManager.getPlayerRoom(socket.id);
+        const isRoomChange = currentRoom !== roomId;
+        
+        const result = roomManager.joinRoom(socket.id, roomId);
+        if (result.success) {
+            const entityId = playerEntities.get(userId);
+            if (entityId) {
+                const entity = world.getEntity(entityId);
+                if (entity) {
+                    const transform = entity.getComponent(Transform);
+                    const movement = entity.getComponent(Movement);
+                    const player = entity.getComponent(Player);
+                    
+                    // Set player's current room
+                    if (player) {
+                        player.roomId = roomId;
+                    }
+                    
+                    // Only teleport to spawn point if changing rooms (not re-login)
+                    // skipSpawn flag allows client to explicitly skip spawn teleport
+                    if (isRoomChange && !skipSpawn && transform && result.spawnPoint) {
+                        transform.x = result.spawnPoint.x;
+                        transform.y = result.spawnPoint.y;
+                        transform.z = result.spawnPoint.z;
+                    }
+                    if (movement && isRoomChange) {
+                        movement.clearTarget();
+                    }
+                }
+            }
+            // Save room to player state
+            statements.updatePlayerRoom.run(roomId, userId);
+            
+            // Send full state for the new room (only players in this room)
+            networkSystem.sendFullState(socket.id, roomId);
+        }
+        callback(result);
+    });
+
+    // Create room (admin only)
+    socket.on('createRoom', (data, callback) => {
+        const { adminToken, name, description } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        const result = roomManager.createRoom(name, description);
+        callback(result);
+    });
+
+    // Publish room layout (admin only)
+    socket.on('publishRoom', (data, callback) => {
+        const { adminToken, roomId, layout } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        const result = roomManager.publishRoom(roomId, layout);
+        callback(result);
+    });
+
+    // Reset room (admin only)
+    socket.on('resetRoom', (data, callback) => {
+        const { adminToken, roomId } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        const result = roomManager.resetRoom(roomId);
+        callback(result);
+    });
+
+    // Delete room (admin only)
+    socket.on('deleteRoom', (data, callback) => {
+        const { adminToken, roomId } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        const result = roomManager.deleteRoom(roomId);
+        callback(result);
+    });
+
+    // Refresh assets (admin only)
+    socket.on('refreshAssets', (data, callback) => {
+        const { adminToken } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        const assets = assetManager.refresh();
+        callback({ success: true, assets: assetManager.getAssetsByCategory() });
     });
 });
 

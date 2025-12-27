@@ -1,4 +1,5 @@
 // Combat UI Manager - handles health bars, hit splats, death screen
+import * as THREE from 'three';
 
 export class CombatUI {
     constructor(networkManager) {
@@ -6,6 +7,7 @@ export class CombatUI {
         this.localUserId = null;
         this.localHp = 10;
         this.localMaxHp = 10;
+        this.game = null; // Will be set later for screen projection
         
         // UI elements
         this.healthBarFill = document.getElementById('health-bar-fill');
@@ -14,6 +16,10 @@ export class CombatUI {
         this.hitSplatContainer = document.getElementById('hit-splat-container');
         
         this.setupListeners();
+    }
+    
+    setGame(game) {
+        this.game = game;
     }
     
     init(userData) {
@@ -38,15 +44,15 @@ export class CombatUI {
                 this.showDamageFlash();
             }
             
-            // Show hit splat for everyone
-            this.showHitSplat(damage, defenderId === this.localUserId);
+            // Show hit splat on the defender
+            this.showHitSplat(damage, defenderId);
         });
         
         // Listen for combat misses
         this.networkManager.socket.on('combatMiss', (data) => {
             console.log('CombatUI: combatMiss received', data);
             const { defenderId } = data;
-            this.showHitSplat('Miss', defenderId === this.localUserId);
+            this.showHitSplat('Miss', defenderId);
         });
         
         // Listen for death
@@ -82,14 +88,42 @@ export class CombatUI {
         }, 300);
     }
     
-    showHitSplat(damage, isLocal) {
+    showHitSplat(damage, defenderId) {
         const splat = document.createElement('div');
         splat.className = 'hit-splat';
         splat.textContent = damage;
         
-        // Position randomly near center of screen
-        const x = window.innerWidth / 2 + (Math.random() - 0.5) * 200;
-        const y = window.innerHeight / 2 + (Math.random() - 0.5) * 200;
+        // Try to position on the defender's torso (3D to 2D projection)
+        let x = window.innerWidth / 2;
+        let y = window.innerHeight / 2;
+        
+        if (this.game && this.game.playerManager) {
+            const player = this.game.playerManager.players.get(defenderId) 
+                        || this.game.playerManager.players.get(Number(defenderId))
+                        || this.game.playerManager.players.get(String(defenderId));
+            
+            if (player && player.mesh) {
+                // Get torso position (center of player mesh, slightly offset up)
+                const torsoPos = new THREE.Vector3(
+                    player.mesh.position.x,
+                    player.mesh.position.y + 0.5, // Center of 1-unit tall cube
+                    player.mesh.position.z
+                );
+                
+                // Project to screen coordinates
+                const screenPos = torsoPos.clone().project(this.game.camera);
+                const container = document.getElementById('scene-container');
+                
+                if (container) {
+                    x = (screenPos.x * 0.5 + 0.5) * container.clientWidth + container.offsetLeft;
+                    y = (-screenPos.y * 0.5 + 0.5) * container.clientHeight + container.offsetTop;
+                }
+            }
+        }
+        
+        // Add small random offset so stacked hits don't overlap exactly
+        x += (Math.random() - 0.5) * 30;
+        y += (Math.random() - 0.5) * 20;
         
         splat.style.left = x + 'px';
         splat.style.top = y + 'px';

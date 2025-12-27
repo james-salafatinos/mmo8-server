@@ -4,6 +4,9 @@ import { AuthUI } from './ui/AuthUI.js';
 import { ChatUI } from './ui/ChatUI.js';
 import { CombatUI } from './ui/CombatUI.js';
 import { NetworkManager } from './network/NetworkManager.js';
+import { EditorManager } from './editor/EditorManager.js';
+import { EditorUI } from './editor/EditorUI.js';
+import { RoomRenderer } from './game/RoomRenderer.js';
 
 // Initialize socket connection
 const socket = io();
@@ -18,9 +21,12 @@ const combatUI = new CombatUI(networkManager);
 
 // Game instance (created after login)
 let game = null;
+let editorManager = null;
+let editorUI = null;
+let roomRenderer = null;
 
 // Handle successful login
-networkManager.onLogin((userData) => {
+networkManager.onLogin(async (userData) => {
     // Hide auth screen, show game screen
     document.getElementById('auth-screen').style.display = 'none';
     document.getElementById('game-screen').style.display = 'block';
@@ -29,9 +35,48 @@ networkManager.onLogin((userData) => {
     game = new Game(networkManager, userData);
     game.init();
 
+    // Initialize room renderer
+    roomRenderer = new RoomRenderer(game.scene);
+
+    // Initialize editor manager and UI
+    editorManager = new EditorManager(game, networkManager);
+    editorManager.roomRenderer = roomRenderer; // Link for coordination
+    editorUI = new EditorUI(editorManager, networkManager);
+
+    // Load available rooms
+    await editorUI.loadRooms();
+
     // Initialize chat and combat UI
     chatUI.init(userData);
     combatUI.init(userData);
+    combatUI.setGame(game); // For hitsplat positioning on player
+
+    // Setup room change listener
+    window.addEventListener('roomChanged', (e) => {
+        if (e.detail && e.detail.layout) {
+            roomRenderer.loadRoom(e.detail.roomId, e.detail.layout);
+        }
+    });
+
+    // Setup room layout update listener
+    networkManager.socket.on('roomLayoutUpdated', (data) => {
+        if (roomRenderer) {
+            roomRenderer.updateRoom(data.roomId, data.layout);
+        }
+    });
+
+    // Join saved room (or default) - use skipSpawn to preserve saved position on re-login
+    const roomDropdown = document.getElementById('room-dropdown');
+    const savedRoomId = userData.user.current_room_id;
+    const targetRoomId = savedRoomId || (roomDropdown && roomDropdown.value ? parseInt(roomDropdown.value) : 1);
+    
+    if (roomDropdown) roomDropdown.value = targetRoomId;
+    
+    networkManager.socket.emit('joinRoom', { roomId: targetRoomId, skipSpawn: true }, (result) => {
+        if (result.success && result.layout) {
+            roomRenderer.loadRoom(result.roomId, result.layout);
+        }
+    });
 });
 
 // Handle being kicked - clear session
@@ -79,6 +124,14 @@ leaderboardClose.addEventListener('click', () => {
 leaderboardOverlay.addEventListener('click', (e) => {
     if (e.target === leaderboardOverlay) {
         leaderboardOverlay.style.display = 'none';
+    }
+});
+
+// Logout button
+document.getElementById('logout-btn').addEventListener('click', () => {
+    if (confirm('Are you sure you want to logout?')) {
+        networkManager.clearSession();
+        window.location.reload();
     }
 });
 

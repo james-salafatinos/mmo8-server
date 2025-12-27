@@ -1,32 +1,46 @@
-// Chat Manager - handles global and private messaging
+// Chat Manager - handles room-based and private messaging
 
 export class ChatManager {
     constructor(db, statements, io) {
         this.db = db;
         this.statements = statements;
         this.io = io;
+        this.roomManager = null; // Set by server.js for room-based broadcasts
     }
 
-    // Send a global message
-    sendGlobalMessage(senderId, senderName, message) {
+    // Send a room message (visible only to players in the same room)
+    sendRoomMessage(senderId, senderName, message, roomId) {
         try {
             this.statements.createMessage.run(senderId, null, message, 1);
             
             const chatMessage = {
-                type: 'global',
+                type: 'room',
                 senderId,
                 senderName,
                 message,
+                roomId,
                 timestamp: Date.now()
             };
 
-            console.log('ChatManager broadcasting message:', chatMessage);
-            this.io.emit('chatMessage', chatMessage);
+            console.log('ChatManager broadcasting room message:', chatMessage);
+            
+            // Broadcast only to players in the same room
+            if (this.roomManager) {
+                this.roomManager.broadcastToRoom(roomId, 'chatMessage', chatMessage);
+            } else {
+                // Fallback to global if no roomManager
+                this.io.emit('chatMessage', chatMessage);
+            }
             return { success: true };
         } catch (err) {
-            console.error('Failed to send global message:', err);
+            console.error('Failed to send room message:', err);
             return { success: false, error: 'Failed to send message' };
         }
+    }
+    
+    // Legacy global message (broadcasts to all)
+    sendGlobalMessage(senderId, senderName, message) {
+        return this.sendRoomMessage(senderId, senderName, message, null);
     }
 
     // Send a private/whisper message
@@ -64,13 +78,14 @@ export class ChatManager {
         }
     }
 
-    // Get recent global messages for a newly connected user
-    getRecentMessages(limit = 50) {
+    // Get recent messages for a newly connected user (room-filtered if roomId provided)
+    getRecentMessages(limit = 50, roomId = null) {
         try {
+            // For now, return recent global messages (room filtering would require schema update)
             const messages = this.statements.getRecentGlobalMessages.all(limit);
             // Reverse to get chronological order
             return messages.reverse().map(m => ({
-                type: 'global',
+                type: 'room',
                 senderId: m.sender_id,
                 senderName: m.sender_name,
                 message: m.message,

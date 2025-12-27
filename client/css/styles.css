@@ -517,7 +517,7 @@ body {
     background: rgba(255, 255, 255, 0.05);
 }
 
-#leaderboard-btn {
+#leaderboard-btn, #logout-btn {
     background: none;
     border: none;
     font-size: 1.2rem;
@@ -526,8 +526,12 @@ body {
     border-radius: 4px;
 }
 
-#leaderboard-btn:hover {
+#leaderboard-btn:hover, #logout-btn:hover {
     background: rgba(255, 255, 255, 0.1);
+}
+
+#logout-btn:hover {
+    background: rgba(255, 80, 80, 0.2);
 }
 
 #chat-header-right {
@@ -615,6 +619,49 @@ body {
         border-left: none;
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         padding-bottom: env(safe-area-inset-bottom, 0);
+    }
+    
+    /* Mobile HUD - centered, stacked layout */
+    #health-bar-container {
+        top: 10px;
+        right: auto;
+        left: 50%;
+        transform: translateX(-50%);
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        max-width: 90vw;
+    }
+    
+    #room-selector {
+        order: 2;
+        margin-right: 0;
+        padding-right: 0;
+        border-right: none;
+        border-top: 1px solid rgba(255, 255, 255, 0.2);
+        padding-top: 8px;
+        width: 100%;
+        justify-content: center;
+    }
+    
+    #room-dropdown {
+        min-width: 100px;
+        font-size: 0.8rem;
+    }
+    
+    #health-bar-bg {
+        width: 120px;
+        height: 16px;
+    }
+    
+    #health-bar-label {
+        font-size: 0.85rem;
+    }
+    
+    #health-bar-text {
+        font-size: 0.8rem;
+        min-width: 40px;
     }
     
     #chat-header {

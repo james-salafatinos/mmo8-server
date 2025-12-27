@@ -131,10 +131,11 @@ export class Game {
             this.playerManager.removePlayer(data.userId);
         });
 
-        // Handle chat messages - show bubble above player
+        // Handle chat messages - show bubble above player (but NOT for whispers)
         this.networkManager.onChatMessage((msg) => {
             console.log('Chat message received:', msg, 'Players:', [...this.playerManager.players.keys()]);
-            if (msg.senderId) {
+            // Only show chat bubbles for room messages, not whispers
+            if (msg.senderId && msg.type !== 'whisper') {
                 this.playerManager.showChatBubble(msg.senderId, msg.message);
             }
         });

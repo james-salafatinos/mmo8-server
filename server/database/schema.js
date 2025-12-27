@@ -71,6 +71,54 @@ export function initializeDatabase(db) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages(recipient_id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at)`);
 
+    // Rooms table - map/level definitions
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS rooms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            description TEXT DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    // Room layouts table - stores published room content
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS room_layouts (
+            room_id INTEGER PRIMARY KEY,
+            objects TEXT DEFAULT '[]',
+            spawn_points TEXT DEFAULT '[]',
+            markers TEXT DEFAULT '[]',
+            version INTEGER DEFAULT 1,
+            published_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (room_id) REFERENCES rooms(id)
+        )
+    `);
+
+    // Add current_room_id to player_state if not exists
+    try {
+        const cols = db.prepare("PRAGMA table_info(player_state)").all();
+        const colNames = cols.map(c => c.name);
+        if (!colNames.includes('current_room_id')) {
+            db.exec(`ALTER TABLE player_state ADD COLUMN current_room_id INTEGER DEFAULT 1`);
+        }
+    } catch (err) {
+        console.error('Migration error (current_room_id):', err);
+    }
+
+    // Create default room if none exists
+    try {
+        const roomCount = db.prepare("SELECT COUNT(*) as count FROM rooms").get();
+        if (roomCount.count === 0) {
+            db.exec(`INSERT INTO rooms (name, description) VALUES ('Main', 'The main spawn area')`);
+            db.exec(`INSERT INTO room_layouts (room_id, objects, spawn_points, markers, version) 
+                     VALUES (1, '[]', '[{"x":0,"y":0.5,"z":0,"name":"default"}]', '[]', 1)`);
+            console.log('Created default room');
+        }
+    } catch (err) {
+        console.error('Error creating default room:', err);
+    }
+
     console.log('Database schema initialized');
 }
 
@@ -138,6 +186,31 @@ export function createStatements(db) {
                OR (m.sender_id = ? AND m.recipient_id = ?)
             ORDER BY m.created_at DESC 
             LIMIT ?
-        `)
+        `),
+
+        // Room operations
+        getAllRooms: db.prepare(`SELECT * FROM rooms ORDER BY id`),
+        getRoomById: db.prepare(`SELECT * FROM rooms WHERE id = ?`),
+        getRoomByName: db.prepare(`SELECT * FROM rooms WHERE name = ?`),
+        createRoom: db.prepare(`INSERT INTO rooms (name, description) VALUES (?, ?)`),
+        updateRoom: db.prepare(`UPDATE rooms SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`),
+        deleteRoom: db.prepare(`DELETE FROM rooms WHERE id = ?`),
+
+        // Room layout operations
+        getRoomLayout: db.prepare(`SELECT * FROM room_layouts WHERE room_id = ?`),
+        createRoomLayout: db.prepare(`
+            INSERT INTO room_layouts (room_id, objects, spawn_points, markers, version) 
+            VALUES (?, ?, ?, ?, ?)
+        `),
+        updateRoomLayout: db.prepare(`
+            UPDATE room_layouts 
+            SET objects = ?, spawn_points = ?, markers = ?, version = ?, published_at = CURRENT_TIMESTAMP 
+            WHERE room_id = ?
+        `),
+        deleteRoomLayout: db.prepare(`DELETE FROM room_layouts WHERE room_id = ?`),
+
+        // Player room state
+        updatePlayerRoom: db.prepare(`UPDATE player_state SET current_room_id = ? WHERE user_id = ?`),
+        getPlayerRoom: db.prepare(`SELECT current_room_id FROM player_state WHERE user_id = ?`)
     };
 }

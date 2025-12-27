@@ -12,6 +12,7 @@ export class InputManager {
         // Touch state for gestures
         this.touchStartTime = 0;
         this.touchStartPos = { x: 0, y: 0 };
+        this.touchStartClientPos = { x: 0, y: 0 }; // Store for raycast at tap start position
         this.isLongPress = false;
         this.longPressThreshold = 200; // 0.2 seconds in ms
         this.longPressTimer = null;
@@ -44,6 +45,10 @@ export class InputManager {
         // Middle mouse drag state (desktop orbit)
         this.isMiddleMouseDragging = false;
         this.lastMousePos = { x: 0, y: 0 };
+        
+        // Follow target state
+        this.followTargetId = null;
+        this.followUpdateInterval = null;
 
         this.setupEventListeners();
         this.createTapIndicator();
@@ -89,6 +94,9 @@ export class InputManager {
         canvas.addEventListener('touchmove', (e) => this.onTouchMove(e), { passive: false });
         canvas.addEventListener('touchend', (e) => this.onTouchEnd(e), { passive: false });
         canvas.addEventListener('touchcancel', (e) => this.onTouchEnd(e), { passive: false });
+        
+        // Mouse wheel zoom (desktop)
+        canvas.addEventListener('wheel', (e) => this.onMouseWheel(e), { passive: false });
     }
 
     // Touch start handler
@@ -111,6 +119,8 @@ export class InputManager {
             const touch = e.touches[0];
             this.touchStartTime = Date.now();
             this.touchStartPos = { x: touch.clientX, y: touch.clientY };
+            // Store client position for raycast at tap START (not release)
+            this.touchStartClientPos = { x: touch.clientX, y: touch.clientY };
             this.isLongPress = false;
             
             // Start long-press timer
@@ -205,8 +215,9 @@ export class InputManager {
             const touch = e.changedTouches[0];
             
             if (this.isLongPress) {
-                // Long press = right-click action
-                this.handleRightClick(touch);
+                // Long press = right-click action at the START position (not release)
+                // This fixes the issue where moving targets couldn't be right-clicked
+                this.handleRightClick({ clientX: this.touchStartClientPos.x, clientY: this.touchStartClientPos.y });
             } else if (!this.isDragging) {
                 // Quick tap = move (only if not dragging)
                 this.handleTap(touch);
@@ -265,9 +276,28 @@ export class InputManager {
         }
     }
     
+    // Mouse wheel handler (desktop zoom)
+    onMouseWheel(e) {
+        e.preventDefault();
+        
+        // deltaY is positive when scrolling down (zoom out), negative when scrolling up (zoom in)
+        const zoomSpeed = 0.002;
+        this.cameraDistance += e.deltaY * zoomSpeed * this.cameraDistance;
+        this.cameraDistance = Math.max(this.minZoom, Math.min(this.maxZoom, this.cameraDistance));
+        
+        // Update camera with new zoom
+        this.game.updateCameraOrbit(this.cameraDistance, this.cameraAngle, this.cameraPitch);
+    }
+    
     // Handle tap (move command)
     handleTap(event) {
         if (this.isTwoFingerMode) return;
+        
+        // Stop following when user manually moves
+        this.stopFollowing();
+        
+        // Check if editor mode is active - if so, don't process movement
+        if (document.body.classList.contains('editor-mode')) return;
         
         const renderer = this.game.getRenderer();
         const canvas = renderer.domElement;
@@ -294,6 +324,9 @@ export class InputManager {
     
     // Handle right-click / long-press action - show context menu
     handleRightClick(event) {
+        // Don't show game context menu in editor mode
+        if (document.body.classList.contains('editor-mode')) return;
+        
         const renderer = this.game.getRenderer();
         const canvas = renderer.domElement;
         const rect = canvas.getBoundingClientRect();
@@ -318,6 +351,7 @@ export class InputManager {
         const items = [];
         let hitGround = false;
         let hitPlayer = null;
+        let hitInteractable = null;
         let groundPoint = null;
         
         for (const hit of intersects) {
@@ -335,6 +369,47 @@ export class InputManager {
                 const playerData = this.game.playerManager.getPlayerByMesh(obj);
                 if (playerData) {
                     hitPlayer = playerData;
+                }
+            }
+            
+            // Check if it's an interactable room object (traverse up hierarchy to find metadata)
+            let current = obj;
+            let metadata = null;
+            let assetId = null;
+            while (current && !metadata) {
+                if (current.userData?.metadata?.interactable) {
+                    metadata = current.userData.metadata;
+                    assetId = current.userData.assetId;
+                    break;
+                }
+                current = current.parent;
+            }
+            
+            if (metadata && !hitInteractable) {
+                hitInteractable = {
+                    mesh: obj,
+                    metadata,
+                    assetId
+                };
+            }
+        }
+        
+        // Mobile-friendly: If no player hit but we have a ground point, check nearby players
+        // This makes it easier to tap-hold on moving players
+        if (!hitPlayer && groundPoint && this.game.playerManager) {
+            const nearbyRadius = 2.0; // Units - generous tap area
+            const localUserId = this.game.playerManager.localUserId;
+            
+            for (const [userId, player] of this.game.playerManager.players) {
+                if (userId === localUserId) continue; // Skip self
+                
+                const dx = player.mesh.position.x - groundPoint.x;
+                const dz = player.mesh.position.z - groundPoint.z;
+                const dist = Math.sqrt(dx * dx + dz * dz);
+                
+                if (dist < nearbyRadius) {
+                    hitPlayer = player.data;
+                    break;
                 }
             }
         }
@@ -369,7 +444,21 @@ export class InputManager {
                 label: '🎯 Follow',
                 type: 'player',
                 action: () => {
-                    console.log('Following:', hitPlayer.username);
+                    this.startFollowing(hitPlayer.userId);
+                    this.hideContextMenu();
+                }
+            });
+        }
+        
+        // Add interactable object options
+        if (hitInteractable) {
+            const interactionType = hitInteractable.metadata.interactionType || 'interact';
+            const label = this.getInteractionLabel(interactionType);
+            items.push({
+                label: label,
+                type: 'interact',
+                action: () => {
+                    this.handleInteraction(hitInteractable);
                     this.hideContextMenu();
                 }
             });
@@ -475,5 +564,113 @@ export class InputManager {
             }
         };
         animate();
+    }
+    
+    // Get interaction label based on type
+    getInteractionLabel(interactionType) {
+        switch (interactionType) {
+            case 'door': return '🚪 Open Door';
+            case 'chest': return '📦 Loot';
+            case 'npc': return '💬 Talk';
+            case 'switch': return '🔘 Toggle';
+            case 'portal': return '🌀 Teleport';
+            case 'custom': return '✨ Interact';
+            default: return '👆 Interact';
+        }
+    }
+    
+    // Handle interaction with object
+    handleInteraction(interactable) {
+        const { metadata, assetId } = interactable;
+        const interactionType = metadata.interactionType || 'interact';
+        
+        console.log('Interacting with:', assetId, 'type:', interactionType);
+        
+        // Emit interaction event for game logic to handle
+        window.dispatchEvent(new CustomEvent('objectInteraction', {
+            detail: {
+                assetId,
+                interactionType,
+                metadata
+            }
+        }));
+        
+        // Show feedback based on interaction type
+        switch (interactionType) {
+            case 'door':
+                console.log('Opening door...');
+                break;
+            case 'chest':
+                console.log('Looting chest...');
+                break;
+            case 'portal':
+                console.log('Teleporting...');
+                break;
+            default:
+                console.log('Interaction triggered');
+        }
+    }
+    
+    // Start following a player
+    startFollowing(targetUserId) {
+        this.stopFollowing(); // Clear any existing follow
+        
+        this.followTargetId = targetUserId;
+        console.log('Started following player:', targetUserId);
+        
+        // Update follow position every 500ms
+        this.followUpdateInterval = setInterval(() => {
+            this.updateFollow();
+        }, 500);
+        
+        // Initial follow update
+        this.updateFollow();
+    }
+    
+    // Stop following
+    stopFollowing() {
+        if (this.followUpdateInterval) {
+            clearInterval(this.followUpdateInterval);
+            this.followUpdateInterval = null;
+        }
+        this.followTargetId = null;
+    }
+    
+    // Update follow - move toward followed player
+    updateFollow() {
+        if (!this.followTargetId) return;
+        
+        const playerManager = this.game.playerManager;
+        if (!playerManager) return;
+        
+        // Get target player
+        const target = playerManager.players.get(this.followTargetId)
+                    || playerManager.players.get(Number(this.followTargetId))
+                    || playerManager.players.get(String(this.followTargetId));
+        
+        if (!target || !target.mesh) {
+            this.stopFollowing();
+            return;
+        }
+        
+        // Get local player
+        const localPlayer = playerManager.getLocalPlayer();
+        if (!localPlayer) return;
+        
+        // Calculate distance to target
+        const dx = target.mesh.position.x - localPlayer.position.x;
+        const dz = target.mesh.position.z - localPlayer.position.z;
+        const distance = Math.sqrt(dx * dx + dz * dz);
+        
+        // Only move if we're more than 2 units away (stop near the target)
+        if (distance > 2) {
+            // Move to a position near the target (not exactly on them)
+            const followDistance = 1.5;
+            const ratio = (distance - followDistance) / distance;
+            const targetX = localPlayer.position.x + dx * ratio;
+            const targetZ = localPlayer.position.z + dz * ratio;
+            
+            this.networkManager.sendMove(targetX, targetZ);
+        }
     }
 }

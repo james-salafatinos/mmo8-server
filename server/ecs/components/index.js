@@ -21,6 +21,7 @@ export class Player {
         this.color = color;
         this.socketId = null;
         this.isOnline = false;
+        this.roomId = null; // Current room the player is in
     }
 
     serialize() {
@@ -28,7 +29,8 @@ export class Player {
             userId: this.userId,
             username: this.username,
             color: this.color,
-            isOnline: this.isOnline
+            isOnline: this.isOnline,
+            roomId: this.roomId
         };
     }
 }
