@@ -568,6 +568,7 @@ io.on('connection', (socket) => {
 
     // ============ SPELL CASTING HANDLERS ============
     socket.on('castSpell', (data, callback) => {
+       
         // Ensure callback is a function (may not be provided)
         const respond = typeof callback === 'function' ? callback : () => {};
         
@@ -697,7 +698,7 @@ io.on('connection', (socket) => {
         
         // Emit generic spell cast for visual effects (include caster position)
         if (roomId) {
-            io.to(`room-${roomId}`).emit('spellCast', {
+            const spellCastPayload = {
                 casterId: userId,
                 targetId: targetUserId,
                 spellId: spellId,
@@ -706,7 +707,11 @@ io.on('connection', (socket) => {
                 casterZ: casterTransform ? casterTransform.z : 0,
                 targetX: targetX,
                 targetZ: targetZ
-            });
+            };
+            console.log('SERVER: Broadcasting spellCast to room:', roomId, 'payload:', spellCastPayload);
+            io.to(`room-${roomId}`).emit('spellCast', spellCastPayload);
+        } else {
+            console.log('SERVER: No roomId found, cannot broadcast spellCast');
         }
         
         respond({ success: true });

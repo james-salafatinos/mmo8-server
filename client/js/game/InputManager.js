@@ -1176,6 +1176,7 @@ export class InputManager {
     
     // Cast teleport spell to location
     castTeleportSpell(x, z) {
+        console.log('teleporting to', x, z);
         if (!this.castMode || !this.selectedSpell) return;
         
         const spell = this.selectedSpell;

@@ -35,7 +35,8 @@ export class EditorInput {
         if (!this.editorManager.isAdminMode) return;
         if (this.isDragging) return;
         
-        const rect = e.target.getBoundingClientRect();
+        const canvas = this.editorManager.game.getRenderer().domElement;
+        const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         
@@ -76,7 +77,8 @@ export class EditorInput {
         if (!this.editorManager.isAdminMode) return;
         if (e.button !== 0) return; // Left click only
         
-        const rect = e.target.getBoundingClientRect();
+        const canvas = this.editorManager.game.getRenderer().domElement;
+        const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         
@@ -94,7 +96,8 @@ export class EditorInput {
         if (!this.editorManager.isAdminMode) return;
         if (!this.isDragging || !this.dragObject) return;
         
-        const rect = document.getElementById('scene-container').getBoundingClientRect();
+        const canvas = this.editorManager.game.getRenderer().domElement;
+        const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         
@@ -157,7 +160,8 @@ export class EditorInput {
         const assetId = e.dataTransfer.getData('assetId');
         if (!assetId) return;
         
-        const rect = e.target.getBoundingClientRect();
+        const canvas = this.editorManager.game.getRenderer().domElement;
+        const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         

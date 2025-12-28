@@ -214,11 +214,17 @@ export class Game {
         });
         
         // Handle spell cast from other players (render their projectiles)
+        console.log('CLIENT: Registering spellCast listener');
         this.networkManager.socket.on('spellCast', (data) => {
+            console.log('CLIENT: spellCast event received!', data);
             const { casterId, targetId, spellId, casterX, casterY, casterZ, targetX, targetZ } = data;
             
             // Don't render our own casts (already handled locally)
-            if (casterId === this.userData.id) return;
+            if (casterId === this.userData.user.id) {
+                console.log('CLIENT: Skipping own spell cast');
+                return;
+            }
+            console.log('CLIENT: Rendering spell from other player');
             
             // Spell definitions for visual rendering
             const spellDefs = {
