@@ -545,6 +545,51 @@ io.on('connection', (socket) => {
 
     // ============ END INVENTORY/EQUIPMENT/BANK HANDLERS ============
 
+    // ============ NOTEPAD HANDLERS ============
+    socket.on('getNotes', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const result = statements.getNotes.get(userId);
+        callback({ success: true, notes: result?.notes || '' });
+    });
+
+    socket.on('saveNotes', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        try {
+            statements.saveNotes.run(data.notes || '', userId);
+            callback({ success: true });
+        } catch (err) {
+            callback({ success: false, error: 'Failed to save notes' });
+        }
+    });
+
+    // ============ SPELL CASTING HANDLERS ============
+    socket.on('castSpell', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const entity = world.getEntity(playerEntities.get(userId));
+        if (!entity) return callback({ success: false, error: 'No entity' });
+        
+        const { spellId, targetUserId } = data;
+        
+        // For now, just emit the spell cast event to all players in the room
+        // Full spell system implementation would go in a SpellSystem class
+        const roomId = roomManager.getPlayerRoom(socket.id);
+        if (roomId) {
+            io.to(`room-${roomId}`).emit('spellCast', {
+                casterId: userId,
+                targetId: targetUserId,
+                spellId: spellId
+            });
+        }
+        
+        callback({ success: true });
+    });
+
     // Handle disconnect
     socket.on('disconnect', () => {
         console.log(`Client disconnected: ${socket.id}`);

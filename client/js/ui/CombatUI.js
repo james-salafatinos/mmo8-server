@@ -10,24 +10,52 @@ export class CombatUI {
         this.localStrength = 1;
         this.game = null; // Will be set later for screen projection
         
-        // UI elements - new levels panel
-        this.hpBarFill = document.getElementById('hp-bar-fill');
-        this.hpLevel = document.getElementById('hp-level');
-        this.strBarFill = document.getElementById('str-bar-fill');
-        this.strLevel = document.getElementById('str-level');
-        this.levelsPanel = document.getElementById('levels-panel');
+        // UI elements
+        this.container = null;
+        this.hpBarFill = null;
+        this.hpLevel = null;
+        this.strBarFill = null;
+        this.strLevel = null;
         this.deathScreen = document.getElementById('death-screen');
         this.hitSplatContainer = document.getElementById('hit-splat-container');
         
+        this.init();
         this.setupListeners();
-        this.setupLevelsPanelToggle();
+    }
+    
+    init() {
+        this.container = document.createElement('div');
+        this.container.className = 'levels-content';
+        this.container.innerHTML = `
+            <div class="level-row">
+                <span class="level-icon">❤️</span>
+                <span class="level-name">Hitpoints</span>
+                <span class="level-value hp-level">10/10</span>
+                <div class="level-bar-bg">
+                    <div class="level-bar-fill hp hp-bar-fill"></div>
+                </div>
+            </div>
+            <div class="level-row">
+                <span class="level-icon">💪</span>
+                <span class="level-name">Strength</span>
+                <span class="level-value str-level">1</span>
+                <div class="level-bar-bg">
+                    <div class="level-bar-fill str str-bar-fill"></div>
+                </div>
+            </div>
+        `;
+        
+        this.hpBarFill = this.container.querySelector('.hp-bar-fill');
+        this.hpLevel = this.container.querySelector('.hp-level');
+        this.strBarFill = this.container.querySelector('.str-bar-fill');
+        this.strLevel = this.container.querySelector('.str-level');
     }
     
     setGame(game) {
         this.game = game;
     }
     
-    init(userData) {
+    initUserData(userData) {
         this.localUserId = userData.user.id;
         this.localHp = userData.position.hitpoints || 10;
         this.localMaxHp = userData.position.max_hitpoints || 10;
@@ -35,20 +63,8 @@ export class CombatUI {
         this.updateLevelsPanel();
     }
     
-    setupLevelsPanelToggle() {
-        const toggleBtn = document.getElementById('levels-toggle-btn');
-        const closeBtn = this.levelsPanel?.querySelector('.panel-close-btn');
-        
-        toggleBtn?.addEventListener('click', () => {
-            const isVisible = this.levelsPanel.style.display !== 'none';
-            this.levelsPanel.style.display = isVisible ? 'none' : 'block';
-            toggleBtn.classList.toggle('active', !isVisible);
-        });
-        
-        closeBtn?.addEventListener('click', () => {
-            this.levelsPanel.style.display = 'none';
-            toggleBtn?.classList.remove('active');
-        });
+    getContentElement() {
+        return this.container;
     }
     
     setupListeners() {

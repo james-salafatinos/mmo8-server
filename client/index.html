@@ -43,35 +43,28 @@
             <div id="room-selector"></div>
         </div>
         
-        <!-- Bottom-right game UI tabs (Runescape-style) -->
-        <div id="game-ui-tabs">
-            <button id="levels-toggle-btn" class="game-tab-btn" title="Levels">❤️</button>
-            <button id="inventory-toggle-btn" class="game-tab-btn" title="Inventory (I)">🎒</button>
-            <button id="equipment-toggle-btn" class="game-tab-btn" title="Equipment (E)">⚔️</button>
-        </div>
-        
-        <!-- Levels Panel (replaces HP bar) -->
-        <div id="levels-panel" class="game-panel" style="display:none;">
-            <div class="panel-header">
-                <span>Levels</span>
-                <button class="panel-close-btn" data-panel="levels">✕</button>
+        <!-- Game UI Dock (Runescape-style, attached to canvas) -->
+        <div id="game-ui-dock">
+            <!-- Tab buttons row -->
+            <div id="game-ui-tabs">
+                <button id="levels-toggle-btn" class="game-tab-btn" data-tab="levels" title="Levels">❤️</button>
+                <button id="inventory-toggle-btn" class="game-tab-btn" data-tab="inventory" title="Inventory">🎒</button>
+                <button id="equipment-toggle-btn" class="game-tab-btn" data-tab="equipment" title="Equipment">⚔️</button>
+                <button id="spellbook-toggle-btn" class="game-tab-btn" data-tab="spellbook" title="Spell Book">📖</button>
+                <button id="quests-toggle-btn" class="game-tab-btn" data-tab="quests" title="Quest Log">📜</button>
+                <button id="notepad-toggle-btn" class="game-tab-btn" data-tab="notepad" title="Notepad">📝</button>
+                <button id="music-toggle-btn" class="game-tab-btn" data-tab="music" title="Music">🎵</button>
+                <button id="settings-toggle-btn" class="game-tab-btn" data-tab="settings" title="Settings">⚙️</button>
             </div>
-            <div class="levels-content">
-                <div class="level-row">
-                    <span class="level-icon">❤️</span>
-                    <span class="level-name">Hitpoints</span>
-                    <span id="hp-level" class="level-value">10/10</span>
-                    <div class="level-bar-bg">
-                        <div id="hp-bar-fill" class="level-bar-fill hp"></div>
-                    </div>
+            
+            <!-- Unified content panel (consistent size for all tabs) -->
+            <div id="game-panel-container" style="display:none;">
+                <div id="game-panel-header">
+                    <span id="game-panel-title">Panel</span>
+                    <button id="game-panel-close" class="game-panel-close-btn">✕</button>
                 </div>
-                <div class="level-row">
-                    <span class="level-icon">💪</span>
-                    <span class="level-name">Strength</span>
-                    <span id="str-level" class="level-value">1</span>
-                    <div class="level-bar-bg">
-                        <div id="str-bar-fill" class="level-bar-fill str"></div>
-                    </div>
+                <div id="game-panel-content">
+                    <!-- Content will be injected here by UI managers -->
                 </div>
             </div>
         </div>

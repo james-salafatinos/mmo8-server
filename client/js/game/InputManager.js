@@ -54,6 +54,10 @@ export class InputManager {
         this.pendingInteraction = null; // { type, data, targetPosition }
         this.interactionCheckInterval = null;
         this.interactionRange = 3; // Distance at which interactions can occur
+        
+        // Spell casting mode
+        this.castMode = false;
+        this.selectedSpell = null;
 
         this.setupEventListeners();
         this.createTapIndicator();
@@ -313,6 +317,24 @@ export class InputManager {
 
         const camera = this.game.getCamera();
         this.raycaster.setFromCamera(this.pointer, camera);
+
+        // In cast mode, check for player targets first
+        if (this.castMode && this.selectedSpell) {
+            const playerMeshes = this.game.playerManager.getPlayerMeshes();
+            const playerIntersects = this.raycaster.intersectObjects(playerMeshes, true);
+            
+            if (playerIntersects.length > 0) {
+                const targetUserId = this.game.playerManager.getUserIdFromMesh(playerIntersects[0].object);
+                if (targetUserId) {
+                    this.castSpellOnTarget(targetUserId);
+                    return;
+                }
+            }
+            // Cancel cast if clicking ground
+            this.setCastMode(false);
+            window.dispatchEvent(new CustomEvent('spellCastComplete'));
+            return;
+        }
 
         const ground = this.game.getGround();
         const intersects = this.raycaster.intersectObject(ground);
@@ -918,5 +940,39 @@ export class InputManager {
                 console.log('Failed to pick up:', result.reason || result.error);
             }
         });
+    }
+    
+    // Spell casting mode
+    setCastMode(enabled, spell = null) {
+        this.castMode = enabled;
+        this.selectedSpell = spell;
+        
+        if (enabled) {
+            document.body.style.cursor = 'crosshair';
+            document.body.classList.add('casting-mode');
+        } else {
+            document.body.style.cursor = '';
+            document.body.classList.remove('casting-mode');
+        }
+    }
+    
+    // Cast spell on target
+    castSpellOnTarget(targetUserId) {
+        if (!this.castMode || !this.selectedSpell) return;
+        
+        this.networkManager.socket.emit('castSpell', {
+            spellId: this.selectedSpell.id,
+            targetUserId
+        }, (result) => {
+            if (result.success) {
+                console.log('Spell cast:', this.selectedSpell.name);
+            } else {
+                console.log('Cast failed:', result.error);
+            }
+        });
+        
+        // Exit cast mode
+        this.setCastMode(false);
+        window.dispatchEvent(new CustomEvent('spellCastComplete'));
     }
 }

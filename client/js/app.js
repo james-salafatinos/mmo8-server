@@ -3,6 +3,14 @@ import { Game } from './game/Game.js';
 import { AuthUI } from './ui/AuthUI.js';
 import { ChatUI } from './ui/ChatUI.js';
 import { CombatUI } from './ui/CombatUI.js';
+import { InventoryUI } from './ui/InventoryUI.js';
+import { EquipmentUI } from './ui/EquipmentUI.js';
+import { SpellBookUI } from './ui/SpellBookUI.js';
+import { QuestLogUI } from './ui/QuestLogUI.js';
+import { NotepadUI } from './ui/NotepadUI.js';
+import { SettingsUI } from './ui/SettingsUI.js';
+import { MusicUI } from './ui/MusicUI.js';
+import { UIManager } from './ui/UIManager.js';
 import { NetworkManager } from './network/NetworkManager.js';
 import { EditorManager } from './editor/EditorManager.js';
 import { EditorUI } from './editor/EditorUI.js';
@@ -18,6 +26,14 @@ const networkManager = new NetworkManager(socket);
 const authUI = new AuthUI(networkManager);
 const chatUI = new ChatUI(networkManager);
 const combatUI = new CombatUI(networkManager);
+const inventoryUI = new InventoryUI(networkManager);
+const equipmentUI = new EquipmentUI(networkManager);
+const spellBookUI = new SpellBookUI(networkManager);
+const questLogUI = new QuestLogUI(networkManager);
+const notepadUI = new NotepadUI(networkManager);
+const settingsUI = new SettingsUI(networkManager);
+const musicUI = new MusicUI(networkManager);
+const uiManager = new UIManager();
 
 // Game instance (created after login)
 let game = null;
@@ -48,8 +64,25 @@ networkManager.onLogin(async (userData) => {
 
     // Initialize chat and combat UI
     chatUI.init(userData);
-    combatUI.init(userData);
+    combatUI.initUserData(userData);
     combatUI.setGame(game); // For hitsplat positioning on player
+    
+    // Register UI managers with UIManager
+    uiManager.registerUI('levels', combatUI);
+    uiManager.registerUI('inventory', inventoryUI);
+    uiManager.registerUI('equipment', equipmentUI);
+    uiManager.registerUI('spellbook', spellBookUI);
+    uiManager.registerUI('quests', questLogUI);
+    uiManager.registerUI('notepad', notepadUI);
+    uiManager.registerUI('settings', settingsUI);
+    uiManager.registerUI('music', musicUI);
+    
+    // SpellBook casting integration with game
+    window.addEventListener('spellSelected', (e) => {
+        if (game && game.inputManager) {
+            game.inputManager.setCastMode(true, e.detail.spell);
+        }
+    });
 
     // Setup room change listener
     window.addEventListener('roomChanged', (e) => {

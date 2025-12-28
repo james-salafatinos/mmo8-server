@@ -1,6 +1,12 @@
 /* Inventory, Equipment, and Bank UI Styles */
 
-/* Common Panel Styles */
+/* Unified Panel Content Styles */
+.inventory-content, .equipment-content, .levels-content {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    color: #e0e0e0;
+}
+
+/* Legacy panel styles (for backward compatibility) */
 .inventory-panel, .equipment-panel, .bank-panel {
     position: fixed;
     background: rgba(20, 20, 30, 0.95);
