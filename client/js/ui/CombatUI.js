@@ -108,6 +108,37 @@ export class CombatUI {
                 this.hideDeathScreen();
             }
         });
+        
+        // Listen for spell hits (fireball, icebolt)
+        this.networkManager.socket.on('spellHit', (data) => {
+            console.log('CombatUI: spellHit received', data);
+            const { casterId, targetId, spellId, damage, targetHp } = data;
+            
+            // Update health if we're the target
+            if (targetId === this.localUserId) {
+                this.localHp = targetHp;
+                this.updateLevelsPanel();
+                this.showDamageFlash();
+            }
+            
+            // Show spell hit splat on target
+            this.showSpellSplat(damage, targetId, spellId);
+        });
+        
+        // Listen for spell heals
+        this.networkManager.socket.on('spellHeal', (data) => {
+            console.log('CombatUI: spellHeal received', data);
+            const { casterId, targetId, healAmount, targetHp } = data;
+            
+            // Update health if we're the target
+            if (targetId === this.localUserId) {
+                this.localHp = targetHp;
+                this.updateLevelsPanel();
+            }
+            
+            // Show heal splat
+            this.showHealSplat(healAmount, targetId);
+        });
     }
     
     updateLevelsPanel() {
@@ -196,5 +227,70 @@ export class CombatUI {
     
     hideDeathScreen() {
         this.deathScreen.style.display = 'none';
+    }
+    
+    // Show spell damage splat with spell-specific styling
+    showSpellSplat(damage, targetId, spellId) {
+        const splat = document.createElement('div');
+        splat.className = `hit-splat spell-splat ${spellId}`;
+        splat.textContent = damage;
+        
+        // Position on target
+        const pos = this.getPlayerScreenPosition(targetId);
+        splat.style.left = pos.x + 'px';
+        splat.style.top = pos.y + 'px';
+        
+        this.hitSplatContainer.appendChild(splat);
+        
+        setTimeout(() => splat.remove(), 1000);
+    }
+    
+    // Show heal splat (green, positive)
+    showHealSplat(healAmount, targetId) {
+        const splat = document.createElement('div');
+        splat.className = 'hit-splat heal-splat';
+        splat.textContent = `+${healAmount}`;
+        
+        const pos = this.getPlayerScreenPosition(targetId);
+        splat.style.left = pos.x + 'px';
+        splat.style.top = pos.y + 'px';
+        
+        this.hitSplatContainer.appendChild(splat);
+        
+        setTimeout(() => splat.remove(), 1000);
+    }
+    
+    // Get screen position for a player
+    getPlayerScreenPosition(playerId) {
+        let x = window.innerWidth / 2;
+        let y = window.innerHeight / 2;
+        
+        if (this.game && this.game.playerManager) {
+            const player = this.game.playerManager.players.get(playerId) 
+                        || this.game.playerManager.players.get(Number(playerId))
+                        || this.game.playerManager.players.get(String(playerId));
+            
+            if (player && player.mesh) {
+                const torsoPos = new THREE.Vector3(
+                    player.mesh.position.x,
+                    player.mesh.position.y + 0.5,
+                    player.mesh.position.z
+                );
+                
+                const screenPos = torsoPos.clone().project(this.game.camera);
+                const container = document.getElementById('scene-container');
+                
+                if (container) {
+                    x = (screenPos.x * 0.5 + 0.5) * container.clientWidth + container.offsetLeft;
+                    y = (-screenPos.y * 0.5 + 0.5) * container.clientHeight + container.offsetTop;
+                }
+            }
+        }
+        
+        // Random offset
+        x += (Math.random() - 0.5) * 30;
+        y += (Math.random() - 0.5) * 20;
+        
+        return { x, y };
     }
 }

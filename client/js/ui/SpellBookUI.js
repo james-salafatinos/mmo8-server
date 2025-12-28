@@ -6,16 +6,12 @@ export class SpellBookUI {
         this.selectedSpell = null;
         this.castMode = false;
         
-        // Define available spells
+        // Define available spells (limited to core 4)
         this.spells = [
-            { id: 'fireball', name: 'Fire Ball', icon: '🔥', type: 'damage', value: 5, manaCost: 10, desc: 'Deals 5 fire damage' },
-            { id: 'icebolt', name: 'Ice Bolt', icon: '❄️', type: 'damage', value: 3, manaCost: 5, desc: 'Deals 3 ice damage' },
-            { id: 'heal', name: 'Heal', icon: '💚', type: 'heal', value: 8, manaCost: 15, desc: 'Restores 8 HP' },
-            { id: 'lightning', name: 'Lightning', icon: '⚡', type: 'damage', value: 7, manaCost: 12, desc: 'Deals 7 lightning damage' },
-            { id: 'poison', name: 'Poison', icon: '☠️', type: 'dot', value: 2, manaCost: 8, desc: 'Poisons for 2 dmg/tick' },
-            { id: 'shield', name: 'Shield', icon: '🛡️', type: 'buff', value: 5, manaCost: 10, desc: '+5 defense for 30s' },
-            { id: 'strength', name: 'Empower', icon: '💪', type: 'buff', value: 3, manaCost: 10, desc: '+3 strength for 30s' },
-            { id: 'teleport', name: 'Teleport', icon: '✨', type: 'utility', value: 0, manaCost: 20, desc: 'Teleport to spawn' },
+            { id: 'fireball', name: 'Fire Ball', icon: '🔥', type: 'damage', value: 5, manaCost: 10, desc: 'Deals 5 fire damage', color: 0xff4400 },
+            { id: 'icebolt', name: 'Ice Bolt', icon: '❄️', type: 'damage', value: 3, manaCost: 5, desc: 'Deals 3 ice damage', color: 0x00ccff },
+            { id: 'heal', name: 'Heal', icon: '💚', type: 'heal', value: 5, manaCost: 15, desc: 'Restores 5 HP', color: 0x44ff44 },
+            { id: 'teleport', name: 'Teleport', icon: '✨', type: 'teleport', value: 0, manaCost: 20, desc: 'Click to teleport there', color: 0xaa44ff },
         ];
         
         this.init();

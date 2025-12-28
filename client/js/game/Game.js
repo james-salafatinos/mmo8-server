@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { PlayerManager } from './PlayerManager.js';
 import { InputManager } from './InputManager.js';
+import { SpellProjectileManager } from './SpellProjectileManager.js';
 import { InventoryUI } from '../ui/InventoryUI.js';
 import { EquipmentUI } from '../ui/EquipmentUI.js';
 import { BankUI } from '../ui/BankUI.js';
@@ -26,6 +27,7 @@ export class Game {
         this.bankUI = null;
         this.effectsUI = null;
         this.worldItemRenderer = null;
+        this.spellProjectileManager = null;
         
         // Camera orbit state
         this.cameraDistance = 20;
@@ -50,6 +52,8 @@ export class Game {
         this.bankUI = new BankUI(this.networkManager, this.inventoryUI);
         this.effectsUI = new EffectsUI(this.networkManager);
         this.worldItemRenderer = new WorldItemRenderer(this.scene, this.networkManager, this.camera);
+        this.spellProjectileManager = new SpellProjectileManager(this.scene);
+        this.spellProjectileManager.setPlayerManager(this.playerManager);
 
         // Setup inventory toggle button
         this.setupInventoryToggle();
@@ -194,6 +198,74 @@ export class Game {
                 this.playerManager.showChatBubble(msg.senderId, msg.message);
             }
         });
+        
+        // Handle player teleport (instant position update)
+        this.networkManager.socket.on('playerTeleported', (data) => {
+            const { userId, x, y, z } = data;
+            const player = this.playerManager.players.get(userId)
+                        || this.playerManager.players.get(Number(userId))
+                        || this.playerManager.players.get(String(userId));
+            
+            if (player) {
+                // Instant position update (no lerp)
+                player.mesh.position.set(x, y, z);
+                player.targetPos.set(x, y, z);
+            }
+        });
+        
+        // Handle spell cast from other players (render their projectiles)
+        this.networkManager.socket.on('spellCast', (data) => {
+            const { casterId, targetId, spellId, casterX, casterY, casterZ, targetX, targetZ } = data;
+            
+            // Don't render our own casts (already handled locally)
+            if (casterId === this.userData.id) return;
+            
+            // Spell definitions for visual rendering
+            const spellDefs = {
+                fireball: { type: 'damage', color: 0xff4400 },
+                icebolt: { type: 'damage', color: 0x00ccff },
+                heal: { type: 'heal', color: 0x44ff44 },
+                teleport: { type: 'teleport', color: 0xaa44ff }
+            };
+            
+            const spell = spellDefs[spellId];
+            if (!spell) return;
+            
+            // Get caster position
+            const caster = this.playerManager.players.get(casterId)
+                        || this.playerManager.players.get(Number(casterId))
+                        || this.playerManager.players.get(String(casterId));
+            
+            let startPos;
+            if (casterX !== undefined) {
+                startPos = new THREE.Vector3(casterX, casterY || 0.5, casterZ);
+            } else if (caster && caster.mesh) {
+                startPos = caster.mesh.position.clone();
+                startPos.y += 0.5;
+            } else {
+                return; // Can't determine caster position
+            }
+            
+            // Handle different spell types
+            if (spell.type === 'damage' && targetId) {
+                // Launch tracking projectile toward target
+                this.spellProjectileManager.launchTrackingProjectile(
+                    startPos, targetId, spell, null
+                );
+            } else if (spell.type === 'heal' && targetId) {
+                // Show heal effect on target
+                const target = this.playerManager.players.get(targetId)
+                            || this.playerManager.players.get(Number(targetId))
+                            || this.playerManager.players.get(String(targetId));
+                if (target && target.mesh) {
+                    this.spellProjectileManager.showHealEffect(target.mesh.position, spell.color);
+                }
+            } else if (spell.type === 'teleport' && targetX !== undefined) {
+                // Show teleport effect
+                const endPos = new THREE.Vector3(targetX, 0.5, targetZ);
+                this.spellProjectileManager.showTeleportEffect(startPos, endPos, spell.color);
+            }
+        });
     }
 
     animate() {
@@ -215,6 +287,11 @@ export class Game {
         // Update world item animations
         if (this.worldItemRenderer) {
             this.worldItemRenderer.update(deltaTime);
+        }
+
+        // Update spell projectiles
+        if (this.spellProjectileManager) {
+            this.spellProjectileManager.update(deltaTime);
         }
 
         this.renderer.render(this.scene, this.camera);

@@ -58,10 +58,39 @@ export class InputManager {
         // Spell casting mode
         this.castMode = false;
         this.selectedSpell = null;
+        
+        // Player targeting highlight
+        this.highlightedPlayer = null;
+        this.outlineMesh = null;
 
         this.setupEventListeners();
+        this.setupSpellListeners();
         this.createTapIndicator();
+        this.createOutlineMesh();
         this.setupContextMenuListeners();
+    }
+    
+    setupSpellListeners() {
+        // Listen for spell selection from SpellBookUI
+        window.addEventListener('spellSelected', (e) => {
+            const spell = e.detail.spell;
+            this.setCastMode(true, spell);
+        });
+    }
+    
+    createOutlineMesh() {
+        // Create outline mesh for player targeting (slightly larger cube wireframe)
+        const geometry = new THREE.BoxGeometry(1.15, 1.15, 1.15);
+        const edges = new THREE.EdgesGeometry(geometry);
+        const material = new THREE.LineBasicMaterial({ 
+            color: 0xffff00, 
+            linewidth: 2,
+            transparent: true,
+            opacity: 0.9
+        });
+        this.outlineMesh = new THREE.LineSegments(edges, material);
+        this.outlineMesh.visible = false;
+        this.game.scene.add(this.outlineMesh);
     }
     
     setupContextMenuListeners() {
@@ -261,8 +290,16 @@ export class InputManager {
         }
     }
     
-    // Mouse move handler (for middle mouse orbit)
+    // Mouse move handler (for middle mouse orbit and spell targeting)
     onMouseMove(e) {
+        // Handle spell targeting highlight for damage and heal spells
+        if (this.castMode && this.selectedSpell) {
+            const spellType = this.selectedSpell.type;
+            if (spellType === 'damage' || spellType === 'heal') {
+                this.updateSpellTargetHighlight(e, spellType === 'heal');
+            }
+        }
+        
         if (!this.isMiddleMouseDragging) return;
         
         const deltaX = e.clientX - this.lastMousePos.x;
@@ -298,6 +335,65 @@ export class InputManager {
         this.game.updateCameraOrbit(this.cameraDistance, this.cameraAngle, this.cameraPitch);
     }
     
+    // Update spell target highlight when hovering over players
+    // includeSelf: for heal spells, also highlight self if no other target
+    updateSpellTargetHighlight(e, includeSelf = false) {
+        const renderer = this.game.getRenderer();
+        const canvas = renderer.domElement;
+        const rect = canvas.getBoundingClientRect();
+        
+        this.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        this.pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        
+        const camera = this.game.getCamera();
+        this.raycaster.setFromCamera(this.pointer, camera);
+        
+        const playerMeshes = this.game.playerManager.getPlayerMeshes();
+        const intersects = this.raycaster.intersectObjects(playerMeshes, true);
+        
+        if (intersects.length > 0) {
+            const hitMesh = intersects[0].object;
+            // Find the actual player mesh (might have hit a child)
+            let playerMesh = hitMesh;
+            while (playerMesh && !playerMesh.userData.userId) {
+                playerMesh = playerMesh.parent;
+            }
+            
+            if (playerMesh && playerMesh.userData.userId) {
+                // Show outline on this player
+                this.outlineMesh.position.copy(playerMesh.position);
+                this.outlineMesh.material.color.setHex(includeSelf ? 0x44ff44 : 0xffff00);
+                this.outlineMesh.visible = true;
+                this.highlightedPlayer = playerMesh.userData.userId;
+                return;
+            }
+        }
+        
+        // No player under cursor - for heal spells, highlight self
+        if (includeSelf) {
+            const localPlayer = this.game.playerManager.getLocalPlayer();
+            if (localPlayer) {
+                this.outlineMesh.position.copy(localPlayer.position);
+                this.outlineMesh.material.color.setHex(0x44ff44); // Green for heal
+                this.outlineMesh.visible = true;
+                this.highlightedPlayer = this.game.playerManager.localUserId;
+                return;
+            }
+        }
+        
+        // No valid target - hide highlight
+        this.outlineMesh.visible = false;
+        this.highlightedPlayer = null;
+    }
+    
+    // Hide the spell target highlight
+    hideSpellTargetHighlight() {
+        if (this.outlineMesh) {
+            this.outlineMesh.visible = false;
+        }
+        this.highlightedPlayer = null;
+    }
+    
     // Handle tap (move command)
     handleTap(event) {
         if (this.isTwoFingerMode) return;
@@ -318,22 +414,60 @@ export class InputManager {
         const camera = this.game.getCamera();
         this.raycaster.setFromCamera(this.pointer, camera);
 
-        // In cast mode, check for player targets first
+        // In cast mode, handle spell targeting based on spell type
         if (this.castMode && this.selectedSpell) {
-            const playerMeshes = this.game.playerManager.getPlayerMeshes();
-            const playerIntersects = this.raycaster.intersectObjects(playerMeshes, true);
+            const spellType = this.selectedSpell.type;
             
-            if (playerIntersects.length > 0) {
-                const targetUserId = this.game.playerManager.getUserIdFromMesh(playerIntersects[0].object);
-                if (targetUserId) {
-                    this.castSpellOnTarget(targetUserId);
+            // Damage spells (fireball, icebolt) - target other players
+            if (spellType === 'damage') {
+                const playerMeshes = this.game.playerManager.getPlayerMeshes();
+                const playerIntersects = this.raycaster.intersectObjects(playerMeshes, true);
+                
+                if (playerIntersects.length > 0) {
+                    const targetUserId = this.game.playerManager.getUserIdFromMesh(playerIntersects[0].object);
+                    if (targetUserId) {
+                        this.castDamageSpell(targetUserId, playerIntersects[0].point);
+                        return;
+                    }
+                }
+                // Clicked ground - cancel cast mode
+                this.cancelSpellCast();
+                return;
+            }
+            
+            // Heal spell - can target self or other players
+            if (spellType === 'heal') {
+                const playerMeshes = this.game.playerManager.getPlayerMeshes();
+                const playerIntersects = this.raycaster.intersectObjects(playerMeshes, true);
+                
+                if (playerIntersects.length > 0) {
+                    const targetUserId = this.game.playerManager.getUserIdFromMesh(playerIntersects[0].object);
+                    if (targetUserId) {
+                        this.castHealSpell(targetUserId);
+                        return;
+                    }
+                }
+                // No player target - heal self
+                this.castHealSpell(this.game.playerManager.localUserId);
+                return;
+            }
+            
+            // Teleport spell - target ground location
+            if (spellType === 'teleport') {
+                const ground = this.game.getGround();
+                const groundIntersects = this.raycaster.intersectObject(ground);
+                
+                if (groundIntersects.length > 0) {
+                    const point = groundIntersects[0].point;
+                    const x = Math.max(-24, Math.min(24, point.x));
+                    const z = Math.max(-24, Math.min(24, point.z));
+                    this.castTeleportSpell(x, z);
                     return;
                 }
+                // No valid ground hit - cancel
+                this.cancelSpellCast();
+                return;
             }
-            // Cancel cast if clicking ground
-            this.setCastMode(false);
-            window.dispatchEvent(new CustomEvent('spellCastComplete'));
-            return;
         }
 
         const ground = this.game.getGround();
@@ -956,7 +1090,7 @@ export class InputManager {
         }
     }
     
-    // Cast spell on target
+    // Cast spell on target (legacy)
     castSpellOnTarget(targetUserId) {
         if (!this.castMode || !this.selectedSpell) return;
         
@@ -972,6 +1106,113 @@ export class InputManager {
         });
         
         // Exit cast mode
+        this.setCastMode(false);
+        window.dispatchEvent(new CustomEvent('spellCastComplete'));
+    }
+    
+    // Cast damage spell (fireball, icebolt) on target player
+    castDamageSpell(targetUserId, hitPoint) {
+        if (!this.castMode || !this.selectedSpell) return;
+        
+        const spell = this.selectedSpell;
+        const localPlayer = this.game.playerManager.getLocalPlayer();
+        const targetPlayer = this.game.playerManager.players.get(targetUserId)
+                          || this.game.playerManager.players.get(Number(targetUserId))
+                          || this.game.playerManager.players.get(String(targetUserId));
+        
+        if (!localPlayer || !targetPlayer) {
+            this.cancelSpellCast();
+            return;
+        }
+        
+        // Create tracking projectile from caster to target
+        const startPos = localPlayer.position.clone();
+        startPos.y += 0.5; // Center of player
+        
+        // Launch tracking projectile that follows the target
+        this.game.spellProjectileManager.launchTrackingProjectile(startPos, targetUserId, spell, () => {
+            // Projectile hit - server will handle damage
+        });
+        
+        // Send to server
+        this.networkManager.socket.emit('castSpell', {
+            spellId: spell.id,
+            targetUserId,
+            type: 'damage'
+        });
+        
+        this.hideSpellTargetHighlight();
+        this.finishSpellCast();
+    }
+    
+    // Cast heal spell on target (self or other player)
+    castHealSpell(targetUserId) {
+        if (!this.castMode || !this.selectedSpell) return;
+        
+        const spell = this.selectedSpell;
+        
+        // Find target player
+        const targetPlayer = this.game.playerManager.players.get(targetUserId)
+                          || this.game.playerManager.players.get(Number(targetUserId))
+                          || this.game.playerManager.players.get(String(targetUserId));
+        
+        if (!targetPlayer || !targetPlayer.mesh) {
+            this.cancelSpellCast();
+            return;
+        }
+        
+        // Show heal effect on target
+        this.game.spellProjectileManager.showHealEffect(targetPlayer.mesh.position, spell.color);
+        
+        // Send to server
+        this.networkManager.socket.emit('castSpell', {
+            spellId: spell.id,
+            targetUserId: targetUserId,
+            type: 'heal'
+        });
+        
+        this.finishSpellCast();
+    }
+    
+    // Cast teleport spell to location
+    castTeleportSpell(x, z) {
+        if (!this.castMode || !this.selectedSpell) return;
+        
+        const spell = this.selectedSpell;
+        const localPlayer = this.game.playerManager.getLocalPlayer();
+        
+        if (!localPlayer) {
+            this.cancelSpellCast();
+            return;
+        }
+        
+        const startPos = localPlayer.position.clone();
+        const endPos = new THREE.Vector3(x, 0.5, z);
+        
+        // Show teleport effect
+        this.game.spellProjectileManager.showTeleportEffect(startPos, endPos, spell.color);
+        
+        // Send to server
+        this.networkManager.socket.emit('castSpell', {
+            spellId: spell.id,
+            targetX: x,
+            targetZ: z,
+            type: 'teleport'
+        });
+        
+        this.finishSpellCast();
+    }
+    
+    // Cancel current spell cast
+    cancelSpellCast() {
+        this.hideSpellTargetHighlight();
+        this.setCastMode(false);
+        window.dispatchEvent(new CustomEvent('spellCastComplete'));
+    }
+    
+    // Finish spell cast (cleanup)
+    finishSpellCast() {
+        this.hideSpellTargetHighlight();
         this.setCastMode(false);
         window.dispatchEvent(new CustomEvent('spellCastComplete'));
     }
