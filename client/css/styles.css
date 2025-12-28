@@ -309,46 +309,180 @@ body {
     cursor: not-allowed;
 }
 
-/* Health Bar Styles */
-#health-bar-container {
+/* Top-left Controls (room selector, admin) */
+#top-left-controls {
     position: fixed;
-    top: 20px;
-    right: 20px;
+    top: 10px;
+    left: 10px;
     display: flex;
     align-items: center;
-    gap: 10px;
-    background: rgba(0, 0, 0, 0.7);
-    padding: 10px 15px;
-    border-radius: 8px;
+    gap: 8px;
     z-index: 100;
 }
 
-#health-bar-label {
-    font-weight: bold;
-    color: #fff;
-    font-size: 1rem;
+#top-left-controls #room-selector {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 6px 10px;
+    border-radius: 6px;
 }
 
-#health-bar-bg {
-    width: 150px;
-    height: 20px;
-    background: rgba(139, 0, 0, 0.5);
-    border: 2px solid rgba(255, 255, 255, 0.3);
+#top-left-controls #room-dropdown {
+    background: rgba(40, 40, 60, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    padding: 4px 8px;
     border-radius: 4px;
+    font-size: 0.8rem;
+}
+
+#top-left-controls .editor-btn-small {
+    background: rgba(40, 40, 60, 0.9);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    color: #fff;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.9rem;
+}
+
+#top-left-controls .editor-btn-small:hover {
+    background: rgba(60, 60, 100, 0.9);
+}
+
+/* Game UI Tabs (Runescape-style bottom right) */
+#game-ui-tabs {
+    position: fixed;
+    bottom: 80px;
+    right: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    z-index: 500;
+}
+
+.game-tab-btn {
+    width: 48px;
+    height: 48px;
+    background: rgba(30, 30, 50, 0.9);
+    border: 2px solid #4a4a6a;
+    border-radius: 8px;
+    font-size: 20px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.game-tab-btn:hover {
+    background: rgba(50, 50, 80, 0.9);
+    border-color: #6a6a8a;
+}
+
+.game-tab-btn.active {
+    background: rgba(60, 60, 100, 0.9);
+    border-color: #8080ff;
+    box-shadow: 0 0 8px rgba(128, 128, 255, 0.4);
+}
+
+/* Game Panels (Levels, etc) */
+.game-panel {
+    position: fixed;
+    background: rgba(20, 20, 30, 0.95);
+    border: 2px solid #4a4a6a;
+    border-radius: 8px;
+    z-index: 600;
+    min-width: 200px;
+}
+
+#levels-panel {
+    right: 70px;
+    bottom: 80px;
+}
+
+.panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: linear-gradient(180deg, #3a3a5a, #2a2a4a);
+    border-radius: 6px 6px 0 0;
+    font-weight: bold;
+    font-size: 13px;
+    color: #e0e0e0;
+}
+
+.panel-close-btn {
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 4px;
+}
+
+.panel-close-btn:hover {
+    color: #ff6666;
+}
+
+.levels-content {
+    padding: 10px;
+}
+
+.level-row {
+    display: grid;
+    grid-template-columns: 24px 80px 50px;
+    grid-template-rows: auto auto;
+    gap: 4px 8px;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.level-row:last-child {
+    margin-bottom: 0;
+}
+
+.level-icon {
+    font-size: 16px;
+    grid-row: span 2;
+}
+
+.level-name {
+    font-size: 12px;
+    color: #aaa;
+}
+
+.level-value {
+    font-size: 13px;
+    font-weight: bold;
+    color: #fff;
+    text-align: right;
+}
+
+.level-bar-bg {
+    grid-column: 2 / 4;
+    height: 6px;
+    background: rgba(60, 60, 80, 0.8);
+    border-radius: 3px;
     overflow: hidden;
 }
 
-#health-bar-fill {
+.level-bar-fill {
     height: 100%;
-    background: linear-gradient(90deg, #ff4444 0%, #ff6666 100%);
-    width: 100%;
     transition: width 0.3s ease;
 }
 
-#health-bar-text {
-    color: #fff;
-    font-size: 0.9rem;
-    min-width: 50px;
+.level-bar-fill.hp {
+    background: linear-gradient(90deg, #cc3333, #ff5555);
+    width: 100%;
+}
+
+.level-bar-fill.str {
+    background: linear-gradient(90deg, #cc9933, #ffcc55);
+    width: 100%;
 }
 
 /* Death Screen */
@@ -621,47 +755,37 @@ body {
         padding-bottom: env(safe-area-inset-bottom, 0);
     }
     
-    /* Mobile HUD - centered, stacked layout */
-    #health-bar-container {
-        top: 10px;
-        right: auto;
-        left: 50%;
-        transform: translateX(-50%);
-        flex-direction: column;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 12px;
-        max-width: 90vw;
+    /* Mobile - Top left controls */
+    #top-left-controls {
+        top: 8px;
+        left: 8px;
     }
     
-    #room-selector {
-        order: 2;
-        margin-right: 0;
-        padding-right: 0;
-        border-right: none;
-        border-top: 1px solid rgba(255, 255, 255, 0.2);
-        padding-top: 8px;
-        width: 100%;
-        justify-content: center;
+    #top-left-controls #room-selector {
+        padding: 4px 8px;
     }
     
-    #room-dropdown {
-        min-width: 100px;
-        font-size: 0.8rem;
+    #top-left-controls #room-dropdown {
+        font-size: 0.75rem;
+        padding: 3px 6px;
     }
     
-    #health-bar-bg {
-        width: 120px;
-        height: 16px;
+    /* Mobile - Game UI tabs */
+    #game-ui-tabs {
+        bottom: calc(50px + env(safe-area-inset-bottom, 0));
+        right: 8px;
     }
     
-    #health-bar-label {
-        font-size: 0.85rem;
+    .game-tab-btn {
+        width: 42px;
+        height: 42px;
+        font-size: 18px;
     }
     
-    #health-bar-text {
-        font-size: 0.8rem;
-        min-width: 40px;
+    /* Mobile - Levels panel */
+    #levels-panel {
+        right: 58px;
+        bottom: calc(50px + env(safe-area-inset-bottom, 0));
     }
     
     #chat-header {

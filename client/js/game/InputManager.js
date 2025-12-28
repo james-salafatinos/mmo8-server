@@ -49,6 +49,11 @@ export class InputManager {
         // Follow target state
         this.followTargetId = null;
         this.followUpdateInterval = null;
+        
+        // Pending interaction state (walk-to-then-interact)
+        this.pendingInteraction = null; // { type, data, targetPosition }
+        this.interactionCheckInterval = null;
+        this.interactionRange = 3; // Distance at which interactions can occur
 
         this.setupEventListeners();
         this.createTapIndicator();
@@ -402,10 +407,15 @@ export class InputManager {
             }
             
             if (metadata && !hitInteractable) {
+                // Get world position from the mesh that has the metadata
+                const worldPos = new THREE.Vector3();
+                current.getWorldPosition(worldPos);
+                
                 hitInteractable = {
                     mesh: obj,
                     metadata,
-                    assetId
+                    assetId,
+                    position: { x: worldPos.x, y: worldPos.y, z: worldPos.z }
                 };
             }
         }
@@ -656,35 +666,58 @@ export class InputManager {
         const pos = interactable.position;
         const position = { x: pos?.x ?? 0, y: pos?.y ?? 0, z: pos?.z ?? 0 };
         
-        this.networkManager.socket.emit('pickupWorldItem', { 
-            itemId, 
-            position,
-            objectId: interactable.objectId 
-        }, (result) => {
-            if (result.success) {
-                console.log('Item picked up!');
-            } else {
-                console.log('Failed to pick up:', result.reason || result.error);
+        // Check if player is close enough
+        const localPlayer = this.game.playerManager?.getLocalPlayer();
+        if (localPlayer) {
+            const dx = position.x - localPlayer.position.x;
+            const dz = position.z - localPlayer.position.z;
+            const distance = Math.sqrt(dx * dx + dz * dz);
+            
+            if (distance > this.interactionRange) {
+                // Too far - walk to item first
+                console.log('Walking to item...');
+                this.setPendingInteraction('pickup', { 
+                    itemId, position, objectId: interactable.objectId 
+                }, position);
+                return;
             }
-        });
+        }
+        
+        // Close enough - pick up directly
+        this.executePickup({ itemId, position, objectId: interactable.objectId });
     }
     
     // Pick up dropped world item (dynamic items dropped by players)
     pickupWorldItem(entityId) {
-        this.networkManager.socket.emit('pickupItem', { 
-            worldItemEntityId: entityId 
-        }, (result) => {
-            if (result.success) {
-                console.log('Picked up dropped item!');
-            } else {
-                console.log('Failed to pick up:', result.reason || result.error);
+        // Get item position from WorldItemRenderer
+        const worldItemRenderer = this.game.worldItemRenderer;
+        const itemData = worldItemRenderer?.worldItems?.get(entityId);
+        
+        if (itemData && itemData.data) {
+            const itemPos = { x: itemData.data.x, y: itemData.data.y, z: itemData.data.z };
+            
+            // Check if player is close enough
+            const localPlayer = this.game.playerManager?.getLocalPlayer();
+            if (localPlayer) {
+                const dx = itemPos.x - localPlayer.position.x;
+                const dz = itemPos.z - localPlayer.position.z;
+                const distance = Math.sqrt(dx * dx + dz * dz);
+                
+                if (distance > this.interactionRange) {
+                    // Too far - walk to item first
+                    console.log('Walking to dropped item...');
+                    this.setPendingInteraction('worlditem', { entityId }, itemPos);
+                    return;
+                }
             }
-        });
+        }
+        
+        // Close enough or can't determine distance - try pickup directly
+        this.executeWorldItemPickup({ entityId });
     }
     
     // Open bank interface
     openBank(interactable) {
-        // Extract plain position from Three.js Vector3 or use metadata position
         const pos = interactable.position;
         const bankPosition = {
             x: pos?.x ?? 0,
@@ -692,13 +725,24 @@ export class InputManager {
             z: pos?.z ?? 0
         };
         console.log('Bank position:', bankPosition);
-        this.networkManager.socket.emit('openBank', { bankPosition }, (result) => {
-            if (result.success && this.game.bankUI) {
-                this.game.bankUI.open(result.bank);
-            } else {
-                console.log('Failed to open bank:', result.reason || result.error);
+        
+        // Check if player is close enough
+        const localPlayer = this.game.playerManager?.getLocalPlayer();
+        if (localPlayer) {
+            const dx = bankPosition.x - localPlayer.position.x;
+            const dz = bankPosition.z - localPlayer.position.z;
+            const distance = Math.sqrt(dx * dx + dz * dz);
+            
+            if (distance > this.interactionRange) {
+                // Too far - walk to bank first
+                console.log('Walking to bank...');
+                this.setPendingInteraction('bank', { position: bankPosition }, bankPosition);
+                return;
             }
-        });
+        }
+        
+        // Close enough - open directly
+        this.executeBankOpen({ position: bankPosition });
     }
     
     // Start following a player
@@ -762,5 +806,117 @@ export class InputManager {
             
             this.networkManager.sendMove(targetX, targetZ);
         }
+    }
+    
+    // Set a pending interaction and walk toward the target
+    setPendingInteraction(type, data, targetPosition) {
+        this.pendingInteraction = { type, data, targetPosition };
+        
+        // Walk toward the target
+        this.networkManager.sendMove(targetPosition.x, targetPosition.z);
+        this.showTapIndicator(targetPosition.x, targetPosition.z);
+        
+        // Start checking if we've arrived
+        this.startInteractionCheck();
+    }
+    
+    // Start interval to check if player has arrived at interaction target
+    startInteractionCheck() {
+        this.stopInteractionCheck();
+        
+        this.interactionCheckInterval = setInterval(() => {
+            this.checkPendingInteraction();
+        }, 200); // Check every 200ms
+    }
+    
+    // Stop checking for pending interaction
+    stopInteractionCheck() {
+        if (this.interactionCheckInterval) {
+            clearInterval(this.interactionCheckInterval);
+            this.interactionCheckInterval = null;
+        }
+    }
+    
+    // Clear pending interaction
+    clearPendingInteraction() {
+        this.pendingInteraction = null;
+        this.stopInteractionCheck();
+    }
+    
+    // Check if player has arrived at pending interaction target
+    checkPendingInteraction() {
+        if (!this.pendingInteraction) {
+            this.stopInteractionCheck();
+            return;
+        }
+        
+        const localPlayer = this.game.playerManager?.getLocalPlayer();
+        if (!localPlayer) return;
+        
+        const target = this.pendingInteraction.targetPosition;
+        const dx = target.x - localPlayer.position.x;
+        const dz = target.z - localPlayer.position.z;
+        const distance = Math.sqrt(dx * dx + dz * dz);
+        
+        if (distance <= this.interactionRange) {
+            // Arrived - execute the interaction
+            const { type, data } = this.pendingInteraction;
+            this.clearPendingInteraction();
+            this.executeInteraction(type, data);
+        }
+    }
+    
+    // Execute a pending interaction
+    executeInteraction(type, data) {
+        switch (type) {
+            case 'bank':
+                this.executeBankOpen(data);
+                break;
+            case 'pickup':
+                this.executePickup(data);
+                break;
+            case 'worlditem':
+                this.executeWorldItemPickup(data);
+                break;
+        }
+    }
+    
+    // Execute bank open (called when in range)
+    executeBankOpen(data) {
+        this.networkManager.socket.emit('openBank', { bankPosition: data.position }, (result) => {
+            if (result.success && this.game.bankUI) {
+                this.game.bankUI.open(result.bank);
+            } else {
+                console.log('Failed to open bank:', result.reason || result.error);
+            }
+        });
+    }
+    
+    // Execute pickup (called when in range)
+    executePickup(data) {
+        this.networkManager.socket.emit('pickupWorldItem', { 
+            itemId: data.itemId, 
+            position: data.position,
+            objectId: data.objectId 
+        }, (result) => {
+            if (result.success) {
+                console.log('Item picked up!');
+            } else {
+                console.log('Failed to pick up:', result.reason || result.error);
+            }
+        });
+    }
+    
+    // Execute world item pickup (called when in range)
+    executeWorldItemPickup(data) {
+        this.networkManager.socket.emit('pickupItem', { 
+            worldItemEntityId: data.entityId 
+        }, (result) => {
+            if (result.success) {
+                console.log('Picked up dropped item!');
+            } else {
+                console.log('Failed to pick up:', result.reason || result.error);
+            }
+        });
     }
 }

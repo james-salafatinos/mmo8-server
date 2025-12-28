@@ -7,15 +7,20 @@ export class CombatUI {
         this.localUserId = null;
         this.localHp = 10;
         this.localMaxHp = 10;
+        this.localStrength = 1;
         this.game = null; // Will be set later for screen projection
         
-        // UI elements
-        this.healthBarFill = document.getElementById('health-bar-fill');
-        this.healthBarText = document.getElementById('health-bar-text');
+        // UI elements - new levels panel
+        this.hpBarFill = document.getElementById('hp-bar-fill');
+        this.hpLevel = document.getElementById('hp-level');
+        this.strBarFill = document.getElementById('str-bar-fill');
+        this.strLevel = document.getElementById('str-level');
+        this.levelsPanel = document.getElementById('levels-panel');
         this.deathScreen = document.getElementById('death-screen');
         this.hitSplatContainer = document.getElementById('hit-splat-container');
         
         this.setupListeners();
+        this.setupLevelsPanelToggle();
     }
     
     setGame(game) {
@@ -26,7 +31,24 @@ export class CombatUI {
         this.localUserId = userData.user.id;
         this.localHp = userData.position.hitpoints || 10;
         this.localMaxHp = userData.position.max_hitpoints || 10;
-        this.updateHealthBar();
+        this.localStrength = userData.position.strength || 1;
+        this.updateLevelsPanel();
+    }
+    
+    setupLevelsPanelToggle() {
+        const toggleBtn = document.getElementById('levels-toggle-btn');
+        const closeBtn = this.levelsPanel?.querySelector('.panel-close-btn');
+        
+        toggleBtn?.addEventListener('click', () => {
+            const isVisible = this.levelsPanel.style.display !== 'none';
+            this.levelsPanel.style.display = isVisible ? 'none' : 'block';
+            toggleBtn.classList.toggle('active', !isVisible);
+        });
+        
+        closeBtn?.addEventListener('click', () => {
+            this.levelsPanel.style.display = 'none';
+            toggleBtn?.classList.remove('active');
+        });
     }
     
     setupListeners() {
@@ -40,7 +62,7 @@ export class CombatUI {
             // Update health if we're the defender
             if (defenderId === this.localUserId) {
                 this.localHp = defenderHp;
-                this.updateHealthBar();
+                this.updateLevelsPanel();
                 this.showDamageFlash();
             }
             
@@ -66,16 +88,27 @@ export class CombatUI {
         this.networkManager.socket.on('playerRespawned', (data) => {
             if (data.userId === this.localUserId) {
                 this.localHp = data.hitpoints;
-                this.updateHealthBar();
+                this.updateLevelsPanel();
                 this.hideDeathScreen();
             }
         });
     }
     
-    updateHealthBar() {
-        const percentage = (this.localHp / this.localMaxHp) * 100;
-        this.healthBarFill.style.width = percentage + '%';
-        this.healthBarText.textContent = `${this.localHp}/${this.localMaxHp}`;
+    updateLevelsPanel() {
+        // Update HP display
+        const hpPercentage = (this.localHp / this.localMaxHp) * 100;
+        if (this.hpBarFill) this.hpBarFill.style.width = hpPercentage + '%';
+        if (this.hpLevel) this.hpLevel.textContent = `${this.localHp}/${this.localMaxHp}`;
+        
+        // Update Strength display
+        if (this.strBarFill) this.strBarFill.style.width = '100%';
+        if (this.strLevel) this.strLevel.textContent = `${this.localStrength}`;
+    }
+    
+    // Update strength from game state
+    updateStrength(strength) {
+        this.localStrength = strength;
+        this.updateLevelsPanel();
     }
     
     showDamageFlash() {

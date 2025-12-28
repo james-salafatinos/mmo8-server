@@ -586,6 +586,21 @@ io.on('connection', (socket) => {
     // EDITOR / ADMIN EVENTS
     // =====================
 
+    // Check if user has an existing admin session
+    socket.on('checkAdminSession', (data, callback) => {
+        const { adminToken } = data;
+        if (!adminToken) {
+            callback({ success: false, hasSession: false });
+            return;
+        }
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (validation.valid) {
+            callback({ success: true, hasSession: true, token: adminToken });
+        } else {
+            callback({ success: false, hasSession: false });
+        }
+    });
+
     // Admin authentication
     socket.on('adminLogin', (data, callback) => {
         const { password } = data;

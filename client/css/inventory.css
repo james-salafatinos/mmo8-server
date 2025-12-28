@@ -329,39 +329,10 @@
     100% { transform: translateX(-50%) scale(1); opacity: 1; }
 }
 
-/* Game UI Buttons Container */
+/* Game UI Buttons - now handled by game-ui-tabs in styles.css */
+/* Legacy support for any remaining references */
 #game-ui-buttons {
-    position: fixed;
-    bottom: 80px;
-    right: 10px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    z-index: 500;
-}
-
-#game-ui-buttons button {
-    width: 50px;
-    height: 50px;
-    background: rgba(40, 40, 60, 0.9);
-    border: 2px solid #5a5a7a;
-    border-radius: 50%;
-    font-size: 22px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s ease;
-}
-
-#game-ui-buttons button:hover {
-    background: rgba(60, 60, 100, 0.9);
-    border-color: #8080ff;
-}
-
-#game-ui-buttons button.active {
-    background: rgba(80, 80, 140, 0.9);
-    border-color: #aaaaff;
+    display: none;
 }
 
 /* Mobile-friendly panel positioning */

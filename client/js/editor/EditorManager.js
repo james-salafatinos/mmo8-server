@@ -58,6 +58,23 @@ export class EditorManager {
         this.mouse = new THREE.Vector2();
     }
 
+    // Check if user already has an admin session
+    async checkExistingAdminSession() {
+        return new Promise((resolve) => {
+            this.networkManager.socket.emit('checkAdminSession', {}, (result) => {
+                if (result.success && result.hasSession) {
+                    this.isAdminMode = true;
+                    this.adminToken = result.token;
+                    this.scene.add(this.editorHelpers);
+                    this.loadAssets();
+                    resolve({ success: true, token: result.token, restored: true });
+                } else {
+                    resolve({ success: false });
+                }
+            });
+        });
+    }
+
     // Enter admin/editor mode
     async enterAdminMode(password) {
         return new Promise((resolve) => {

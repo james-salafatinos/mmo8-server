@@ -177,24 +177,38 @@ export class EditorUI {
     }
 
     createRoomSelector() {
-        const hud = document.getElementById('health-bar-container');
-        if (!hud) return;
+        const container = document.getElementById('room-selector');
+        if (!container) return;
         
-        const roomSelector = document.createElement('div');
-        roomSelector.id = 'room-selector';
-        roomSelector.innerHTML = `
+        container.innerHTML = `
             <select id="room-dropdown">
                 <option value="">Loading rooms...</option>
             </select>
             <button id="admin-mode-btn" class="editor-btn-small" title="Admin Mode">🔧</button>
         `;
-        hud.insertBefore(roomSelector, hud.firstChild);
     }
 
     setupEventListeners() {
-        // Admin login
-        document.getElementById('admin-mode-btn')?.addEventListener('click', () => {
-            this.showAdminLoginModal();
+        // Admin login - check for existing session first
+        document.getElementById('admin-mode-btn')?.addEventListener('click', async () => {
+            // Try to restore existing admin session
+            const existing = await this.editorManager.checkExistingAdminSession();
+            if (existing.success) {
+                // Session restored - go directly to editor
+                this.adminToken = existing.token;
+                this.showEditorUI();
+                this.populateAssetPalette();
+                if (!this.itemsEditor) {
+                    const { ItemsEditor } = await import('./ItemsEditor.js');
+                    this.itemsEditor = new ItemsEditor(this.networkManager, this.adminToken);
+                } else {
+                    this.itemsEditor.updateAdminToken(this.adminToken);
+                }
+                this.loadEditorRoom();
+            } else {
+                // No existing session - show login modal
+                this.showAdminLoginModal();
+            }
         });
         
         document.getElementById('admin-login-btn')?.addEventListener('click', () => {
