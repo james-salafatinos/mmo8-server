@@ -1,0 +1,429 @@
+/* Inventory, Equipment, and Bank UI Styles */
+
+/* Common Panel Styles */
+.inventory-panel, .equipment-panel, .bank-panel {
+    position: fixed;
+    background: rgba(20, 20, 30, 0.95);
+    border: 2px solid #4a4a6a;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    color: #e0e0e0;
+}
+
+.inventory-panel {
+    right: 20px;
+    top: 100px;
+    width: 280px;
+}
+
+.equipment-panel {
+    right: 320px;
+    top: 100px;
+    width: 200px;
+}
+
+.bank-panel {
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 420px;
+}
+
+/* Headers */
+.inventory-header, .equipment-header, .bank-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    background: linear-gradient(180deg, #3a3a5a, #2a2a4a);
+    border-bottom: 1px solid #5a5a7a;
+    border-radius: 6px 6px 0 0;
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 0 5px;
+}
+
+.close-btn:hover {
+    color: #ff6666;
+}
+
+/* Inventory Grid */
+.inventory-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 4px;
+    padding: 10px;
+}
+
+.inventory-slot, .bank-slot {
+    width: 34px;
+    height: 34px;
+    background: rgba(40, 40, 60, 0.8);
+    border: 1px solid #5a5a7a;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.15s ease;
+}
+
+.inventory-slot:hover, .bank-slot:hover {
+    border-color: #8080ff;
+    background: rgba(60, 60, 100, 0.8);
+}
+
+.inventory-slot.has-item, .bank-slot.has-item {
+    border-color: #6a6a8a;
+}
+
+.slot-content {
+    font-size: 20px;
+    line-height: 1;
+}
+
+.slot-quantity {
+    position: absolute;
+    bottom: 1px;
+    right: 3px;
+    font-size: 10px;
+    color: #ffcc00;
+    text-shadow: 1px 1px 1px #000;
+    font-weight: bold;
+}
+
+/* Equipment Panel */
+.equipment-body {
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.equipment-row {
+    display: flex;
+    gap: 10px;
+}
+
+.equipment-slot {
+    width: 50px;
+    height: 50px;
+    background: rgba(40, 40, 60, 0.8);
+    border: 2px solid #5a5a7a;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.equipment-slot:hover {
+    border-color: #8080ff;
+}
+
+.equipment-slot.equipped {
+    border-color: #66ff66;
+    background: rgba(40, 60, 40, 0.8);
+}
+
+.equipment-slot .slot-label {
+    font-size: 8px;
+    color: #888;
+    margin-bottom: 2px;
+}
+
+.equipment-slot .slot-content {
+    font-size: 24px;
+}
+
+.equipment-stats {
+    display: flex;
+    justify-content: space-around;
+    padding: 10px;
+    border-top: 1px solid #5a5a7a;
+    font-size: 12px;
+}
+
+.equipment-stats div {
+    color: #aaa;
+}
+
+.equipment-stats span {
+    color: #66ff66;
+    font-weight: bold;
+}
+
+/* Bank Panel */
+.bank-pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 15px;
+    padding: 10px;
+    border-bottom: 1px solid #5a5a7a;
+}
+
+.page-btn {
+    background: #3a3a5a;
+    border: 1px solid #5a5a7a;
+    color: #e0e0e0;
+    padding: 5px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.page-btn:hover {
+    background: #4a4a6a;
+}
+
+.page-info {
+    font-size: 12px;
+    color: #aaa;
+}
+
+.bank-grid {
+    display: grid;
+    grid-template-columns: repeat(10, 1fr);
+    gap: 4px;
+    padding: 10px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.bank-actions {
+    padding: 10px;
+    border-top: 1px solid #5a5a7a;
+    text-align: center;
+}
+
+.deposit-all-btn {
+    background: #4a6a4a;
+    border: 1px solid #6a8a6a;
+    color: #e0e0e0;
+    padding: 8px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.deposit-all-btn:hover {
+    background: #5a7a5a;
+}
+
+/* Context Menu */
+.inv-context-menu {
+    position: fixed;
+    background: rgba(30, 30, 50, 0.98);
+    border: 1px solid #5a5a7a;
+    border-radius: 4px;
+    padding: 5px 0;
+    z-index: 2000;
+    min-width: 100px;
+}
+
+.inv-context-menu button {
+    display: block;
+    width: 100%;
+    background: none;
+    border: none;
+    color: #e0e0e0;
+    padding: 8px 15px;
+    text-align: left;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.inv-context-menu button:hover {
+    background: rgba(80, 80, 120, 0.5);
+}
+
+/* Effects Panel */
+.effects-panel {
+    position: fixed;
+    top: 100px;
+    left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    z-index: 500;
+}
+
+.effect-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(20, 20, 30, 0.9);
+    border: 1px solid #5a5a7a;
+    border-radius: 4px;
+    padding: 5px 10px;
+    font-size: 12px;
+}
+
+.effect-icon {
+    font-size: 16px;
+}
+
+.effect-name {
+    font-weight: bold;
+    color: #aaa;
+}
+
+.effect-value {
+    color: #66ff66;
+}
+
+.effect-timer {
+    color: #ffcc00;
+    margin-left: auto;
+}
+
+/* Consumable Notifications */
+.consumable-notification {
+    position: fixed;
+    top: 40%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(20, 20, 30, 0.9);
+    border: 2px solid #5a5a7a;
+    border-radius: 8px;
+    padding: 15px 25px;
+    font-size: 18px;
+    font-weight: bold;
+    z-index: 3000;
+    animation: popIn 0.3s ease;
+}
+
+.consumable-notification.heal {
+    border-color: #66ff66;
+}
+
+.consumable-notification.heal .heal-text {
+    color: #66ff66;
+}
+
+.consumable-notification.buff {
+    border-color: #6666ff;
+    color: #aaaaff;
+}
+
+.consumable-notification.fade-out {
+    opacity: 0;
+    transition: opacity 0.5s ease;
+}
+
+@keyframes popIn {
+    0% { transform: translateX(-50%) scale(0.5); opacity: 0; }
+    100% { transform: translateX(-50%) scale(1); opacity: 1; }
+}
+
+/* Game UI Buttons Container */
+#game-ui-buttons {
+    position: fixed;
+    bottom: 80px;
+    right: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    z-index: 500;
+}
+
+#game-ui-buttons button {
+    width: 50px;
+    height: 50px;
+    background: rgba(40, 40, 60, 0.9);
+    border: 2px solid #5a5a7a;
+    border-radius: 50%;
+    font-size: 22px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+#game-ui-buttons button:hover {
+    background: rgba(60, 60, 100, 0.9);
+    border-color: #8080ff;
+}
+
+#game-ui-buttons button.active {
+    background: rgba(80, 80, 140, 0.9);
+    border-color: #aaaaff;
+}
+
+/* Mobile-friendly panel positioning */
+@media (max-width: 768px) {
+    .inventory-panel, .equipment-panel {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        top: auto;
+        width: 100%;
+        max-height: 40vh;
+        border-radius: 12px 12px 0 0;
+        overflow-y: auto;
+        padding-bottom: env(safe-area-inset-bottom, 20px);
+    }
+    
+    .inventory-panel {
+        z-index: 1001;
+    }
+    
+    .equipment-panel {
+        z-index: 1000;
+    }
+    
+    .inventory-grid {
+        grid-template-columns: repeat(7, 1fr);
+        gap: 6px;
+        padding: 8px;
+        padding-bottom: calc(8px + env(safe-area-inset-bottom, 20px));
+    }
+    
+    .inventory-slot {
+        width: 40px;
+        height: 40px;
+    }
+    
+    .equipment-grid {
+        padding: 10px;
+        padding-bottom: calc(10px + env(safe-area-inset-bottom, 20px));
+    }
+    
+    .bank-panel {
+        left: 0;
+        right: 0;
+        bottom: 0;
+        top: auto;
+        transform: none;
+        width: 100%;
+        max-height: 45vh;
+        border-radius: 12px 12px 0 0;
+        padding-bottom: env(safe-area-inset-bottom, 20px);
+    }
+    
+    #game-ui-buttons {
+        bottom: calc(70px + env(safe-area-inset-bottom, 20px));
+        right: 8px;
+    }
+    
+    #game-ui-buttons button {
+        width: 44px;
+        height: 44px;
+        font-size: 20px;
+    }
+}

@@ -352,10 +352,26 @@ export class InputManager {
         let hitGround = false;
         let hitPlayer = null;
         let hitInteractable = null;
+        let hitWorldItem = null;
         let groundPoint = null;
         
         for (const hit of intersects) {
             const obj = hit.object;
+            
+            // Check if it's a world item (dropped by players) - traverse up for GLB models
+            if (!hitWorldItem) {
+                let current = obj;
+                while (current) {
+                    if (current.userData?.entityId) {
+                        hitWorldItem = {
+                            entityId: current.userData.entityId,
+                            name: current.userData.itemName || 'Item'
+                        };
+                        break;
+                    }
+                    current = current.parent;
+                }
+            }
             
             // Check if it's the ground
             if (obj.name === 'ground') {
@@ -445,6 +461,18 @@ export class InputManager {
                 type: 'player',
                 action: () => {
                     this.startFollowing(hitPlayer.userId);
+                    this.hideContextMenu();
+                }
+            });
+        }
+        
+        // Add world item pickup option (dropped items)
+        if (hitWorldItem) {
+            items.push({
+                label: `🎁 Pick up ${hitWorldItem.name}`,
+                type: 'worlditem',
+                action: () => {
+                    this.pickupWorldItem(hitWorldItem.entityId);
                     this.hideContextMenu();
                 }
             });
@@ -574,6 +602,9 @@ export class InputManager {
             case 'npc': return '💬 Talk';
             case 'switch': return '🔘 Toggle';
             case 'portal': return '🌀 Teleport';
+            case 'bank': return '🏦 Open Bank';
+            case 'pickup': return '🎁 Pick Up';
+            case 'item_spawn': return '📦 Pickup';
             case 'custom': return '✨ Interact';
             default: return '👆 Interact';
         }
@@ -606,9 +637,68 @@ export class InputManager {
             case 'portal':
                 console.log('Teleporting...');
                 break;
+            case 'bank':
+                console.log('Opening bank...');
+                this.openBank(interactable);
+                break;
+            case 'pickup':
+                console.log('Picking up item...');
+                this.pickupItem(interactable);
+                break;
             default:
                 console.log('Interaction triggered');
         }
+    }
+    
+    // Pick up item from world (static editor-placed items)
+    pickupItem(interactable) {
+        const itemId = interactable.metadata?.itemId;
+        const pos = interactable.position;
+        const position = { x: pos?.x ?? 0, y: pos?.y ?? 0, z: pos?.z ?? 0 };
+        
+        this.networkManager.socket.emit('pickupWorldItem', { 
+            itemId, 
+            position,
+            objectId: interactable.objectId 
+        }, (result) => {
+            if (result.success) {
+                console.log('Item picked up!');
+            } else {
+                console.log('Failed to pick up:', result.reason || result.error);
+            }
+        });
+    }
+    
+    // Pick up dropped world item (dynamic items dropped by players)
+    pickupWorldItem(entityId) {
+        this.networkManager.socket.emit('pickupItem', { 
+            worldItemEntityId: entityId 
+        }, (result) => {
+            if (result.success) {
+                console.log('Picked up dropped item!');
+            } else {
+                console.log('Failed to pick up:', result.reason || result.error);
+            }
+        });
+    }
+    
+    // Open bank interface
+    openBank(interactable) {
+        // Extract plain position from Three.js Vector3 or use metadata position
+        const pos = interactable.position;
+        const bankPosition = {
+            x: pos?.x ?? 0,
+            y: pos?.y ?? 0,
+            z: pos?.z ?? 0
+        };
+        console.log('Bank position:', bankPosition);
+        this.networkManager.socket.emit('openBank', { bankPosition }, (result) => {
+            if (result.success && this.game.bankUI) {
+                this.game.bankUI.open(result.bank);
+            } else {
+                console.log('Failed to open bank:', result.reason || result.error);
+            }
+        });
     }
     
     // Start following a player

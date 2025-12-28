@@ -1,5 +1,5 @@
 // Combat System - handles combat logic and damage calculation
-import { Transform, Player, Movement, Combat } from '../components/index.js';
+import { Transform, Player, Movement, Combat, Equipment, ActiveEffects } from '../components/index.js';
 
 export class CombatSystem {
     constructor(world, io, statements) {
@@ -27,7 +27,7 @@ export class CombatSystem {
                 continue;
             }
             
-            console.log('CombatSystem update: Player', player.username, 'in combat, target:', combat.targetEntityId);
+            // console.log('CombatSystem update: Player', player.username, 'in combat, target:', combat.targetEntityId);
 
             // Get target entity
             const targetEntity = this.world.getEntity(combat.targetEntityId);
@@ -92,15 +92,32 @@ export class CombatSystem {
 
         console.log('performAttack:', attackerPlayer.username, '->', defenderPlayer.username);
 
-        // 50% chance to hit
+        // Get equipment and effect bonuses
+        const attackerEquip = attackerEntity.getComponent(Equipment);
+        const attackerEffects = attackerEntity.getComponent(ActiveEffects);
+        const defenderEquip = defenderEntity.getComponent(Equipment);
+        const defenderEffects = defenderEntity.getComponent(ActiveEffects);
+
+        // Calculate effective stats (base + equipment + active effects)
+        let effectiveStrength = attackerCombat.strength;
+        if (attackerEquip) effectiveStrength += attackerEquip.bonusAttack;
+        if (attackerEffects) effectiveStrength += attackerEffects.getStrengthBonus();
+
+        let effectiveDefense = defenderCombat.defense || 0;
+        if (defenderEquip) effectiveDefense += defenderEquip.bonusDefense;
+        if (defenderEffects) effectiveDefense += defenderEffects.getDefenseBonus();
+
+        // 50% base hit chance, modified by stats
         const hitRoll = Math.random();
         const didHit = hitRoll >= 0.5;
 
         if (didHit) {
-            // Calculate damage: 1 * strength level
-            const damage = 1 * attackerCombat.strength;
+            // Calculate damage: strength - defense/2, minimum 1
+            const baseDamage = effectiveStrength;
+            const damageReduction = Math.floor(effectiveDefense / 2);
+            const damage = Math.max(1, baseDamage - damageReduction);
             defenderCombat.hitpoints = Math.max(0, defenderCombat.hitpoints - damage);
-            console.log('Hit! Damage:', damage, 'Defender HP:', defenderCombat.hitpoints);
+            console.log('Hit! Damage:', damage, '(STR:', effectiveStrength, 'vs DEF:', effectiveDefense, ') Defender HP:', defenderCombat.hitpoints);
 
             // Update database
             this.statements.updatePlayerStats.run(

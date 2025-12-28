@@ -1,5 +1,6 @@
 // EditorUI - handles editor interface elements
 import { EditorInput } from './EditorInput.js';
+import { ItemsEditor } from './ItemsEditor.js';
 
 export class EditorUI {
     constructor(editorManager, networkManager) {
@@ -7,6 +8,8 @@ export class EditorUI {
         this.networkManager = networkManager;
         this.isVisible = false;
         this.editorInput = null;
+        this.itemsEditor = null;
+        this.adminToken = null;
         
         this.createUI();
         this.setupEventListeners();
@@ -117,6 +120,9 @@ export class EditorUI {
             </div>
             <div class="toolbar-spacer"></div>
             <div class="toolbar-group">
+                <button id="tool-items" class="editor-btn" title="Items Editor">
+                    📦 Items
+                </button>
                 <button id="tool-publish" class="editor-btn primary" title="Publish Room">
                     📤 Publish
                 </button>
@@ -251,6 +257,7 @@ export class EditorUI {
             this.editorManager.rotationSnap = e.target.checked;
         });
         
+        document.getElementById('tool-items')?.addEventListener('click', () => this.toggleItemsEditor());
         document.getElementById('tool-publish')?.addEventListener('click', () => this.handlePublish());
         document.getElementById('tool-revert')?.addEventListener('click', () => this.handleRevert());
         document.getElementById('tool-exit-editor')?.addEventListener('click', () => this.exitEditorMode());
@@ -283,9 +290,19 @@ export class EditorUI {
         const result = await this.editorManager.enterAdminMode(password);
         
         if (result.success) {
+            // Token comes from AdminManager as 'token', EditorManager stores it
+            this.adminToken = result.token || this.editorManager.adminToken;
             this.hideAdminLoginModal();
             this.showEditorUI();
             this.populateAssetPalette();
+            
+            // Initialize items editor with admin token
+            if (!this.itemsEditor) {
+                this.itemsEditor = new ItemsEditor(this.networkManager, this.adminToken);
+            } else {
+                this.itemsEditor.updateAdminToken(this.adminToken);
+            }
+            
             // Load current room for editing
             const roomDropdown = document.getElementById('room-dropdown');
             if (roomDropdown.value) {
@@ -294,6 +311,12 @@ export class EditorUI {
             }
         } else {
             errorDiv.textContent = result.error || 'Login failed';
+        }
+    }
+    
+    toggleItemsEditor() {
+        if (this.itemsEditor) {
+            this.itemsEditor.toggle();
         }
     }
 
@@ -646,8 +669,14 @@ export class EditorUI {
                     <option value="npc" ${obj.data.metadata.interactionType === 'npc' ? 'selected' : ''}>NPC (Talk)</option>
                     <option value="switch" ${obj.data.metadata.interactionType === 'switch' ? 'selected' : ''}>Switch (Toggle)</option>
                     <option value="portal" ${obj.data.metadata.interactionType === 'portal' ? 'selected' : ''}>Portal (Teleport)</option>
+                    <option value="bank" ${obj.data.metadata.interactionType === 'bank' ? 'selected' : ''}>Bank (Storage)</option>
+                    <option value="pickup" ${obj.data.metadata.interactionType === 'pickup' ? 'selected' : ''}>Pickup (Item)</option>
                     <option value="custom" ${obj.data.metadata.interactionType === 'custom' ? 'selected' : ''}>Custom</option>
                 </select>
+                <div id="pickup-item-section" style="display: ${obj.data.metadata.interactionType === 'pickup' ? 'block' : 'none'}; margin-top: 8px;">
+                    <label>Item ID (from database)</label>
+                    <input type="number" id="meta-item-id" value="${obj.data.metadata.itemId || ''}" placeholder="e.g., 1 for Bronze Sword">
+                </div>
             </div>
             <div class="inspector-section">
                 <label>Grouping</label>
@@ -689,6 +718,14 @@ export class EditorUI {
         
         document.getElementById('meta-interaction-type')?.addEventListener('change', (e) => {
             obj.data.metadata.interactionType = e.target.value;
+            const pickupSection = document.getElementById('pickup-item-section');
+            if (pickupSection) {
+                pickupSection.style.display = e.target.value === 'pickup' ? 'block' : 'none';
+            }
+        });
+        
+        document.getElementById('meta-item-id')?.addEventListener('change', (e) => {
+            obj.data.metadata.itemId = parseInt(e.target.value) || null;
         });
         
         // Group controls

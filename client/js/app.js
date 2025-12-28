@@ -65,6 +65,13 @@ networkManager.onLogin(async (userData) => {
         }
     });
 
+    // Handle object picked up (remove from scene)
+    networkManager.socket.on('objectPickedUp', (data) => {
+        if (roomRenderer && data.objectId !== undefined) {
+            roomRenderer.removeObject(data.objectId);
+        }
+    });
+
     // Join saved room (or default) - use skipSpawn to preserve saved position on re-login
     const roomDropdown = document.getElementById('room-dropdown');
     const savedRoomId = userData.user.current_room_id;

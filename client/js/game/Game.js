@@ -2,6 +2,11 @@
 import * as THREE from 'three';
 import { PlayerManager } from './PlayerManager.js';
 import { InputManager } from './InputManager.js';
+import { InventoryUI } from '../ui/InventoryUI.js';
+import { EquipmentUI } from '../ui/EquipmentUI.js';
+import { BankUI } from '../ui/BankUI.js';
+import { EffectsUI } from '../ui/EffectsUI.js';
+import { WorldItemRenderer } from '../ui/WorldItemRenderer.js';
 
 export class Game {
     constructor(networkManager, userData) {
@@ -14,6 +19,13 @@ export class Game {
         this.inputManager = null;
         this.ground = null;
         this.clock = new THREE.Clock();
+        
+        // UI Components
+        this.inventoryUI = null;
+        this.equipmentUI = null;
+        this.bankUI = null;
+        this.effectsUI = null;
+        this.worldItemRenderer = null;
         
         // Camera orbit state
         this.cameraDistance = 20;
@@ -31,6 +43,16 @@ export class Game {
         // Initialize managers
         this.playerManager = new PlayerManager(this.scene, this.userData);
         this.inputManager = new InputManager(this, this.networkManager);
+
+        // Initialize UI components
+        this.inventoryUI = new InventoryUI(this.networkManager);
+        this.equipmentUI = new EquipmentUI(this.networkManager);
+        this.bankUI = new BankUI(this.networkManager, this.inventoryUI);
+        this.effectsUI = new EffectsUI(this.networkManager);
+        this.worldItemRenderer = new WorldItemRenderer(this.scene, this.networkManager, this.camera);
+
+        // Setup inventory toggle button
+        this.setupInventoryToggle();
 
         // Setup network callbacks
         this.setupNetworkCallbacks();
@@ -109,6 +131,39 @@ export class Game {
         container.appendChild(this.renderer.domElement);
     }
 
+    setupInventoryToggle() {
+        const invBtn = document.getElementById('inventory-toggle-btn');
+        const equipBtn = document.getElementById('equipment-toggle-btn');
+        
+        if (invBtn) {
+            invBtn.addEventListener('click', () => {
+                this.inventoryUI.toggle();
+                invBtn.classList.toggle('active', this.inventoryUI.isVisible);
+            });
+        }
+        
+        if (equipBtn) {
+            equipBtn.addEventListener('click', () => {
+                this.equipmentUI.toggle();
+                equipBtn.classList.toggle('active', this.equipmentUI.isVisible);
+            });
+        }
+
+        // Keyboard shortcuts
+        window.addEventListener('keydown', (e) => {
+            if (document.activeElement.tagName === 'INPUT') return;
+            
+            if (e.key === 'i' || e.key === 'I') {
+                this.inventoryUI.toggle();
+                invBtn?.classList.toggle('active', this.inventoryUI.isVisible);
+            }
+            if (e.key === 'e' || e.key === 'E') {
+                this.equipmentUI.toggle();
+                equipBtn?.classList.toggle('active', this.equipmentUI.isVisible);
+            }
+        });
+    }
+
     setupNetworkCallbacks() {
         // Handle game state updates
         this.networkManager.onGameState((data) => {
@@ -155,6 +210,11 @@ export class Game {
             if (localPlayer) {
                 this.updateCamera(localPlayer.position);
             }
+        }
+
+        // Update world item animations
+        if (this.worldItemRenderer) {
+            this.worldItemRenderer.update(deltaTime);
         }
 
         this.renderer.render(this.scene, this.camera);

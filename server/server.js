@@ -11,11 +11,16 @@ import Database from 'better-sqlite3';
 // ECS imports
 import { World } from './ecs/World.js';
 import { Entity } from './ecs/Entity.js';
-import { Transform, Player, Movement, Network, Combat } from './ecs/components/index.js';
+import { Transform, Player, Movement, Network, Combat, Inventory, Equipment, ActiveEffects } from './ecs/components/index.js';
 import { MovementSystem } from './ecs/systems/MovementSystem.js';
 import { NetworkSystem } from './ecs/systems/NetworkSystem.js';
 import { PersistenceSystem } from './ecs/systems/PersistenceSystem.js';
 import { CombatSystem } from './ecs/systems/CombatSystem.js';
+import { InventorySystem } from './ecs/systems/InventorySystem.js';
+import { EquipmentSystem } from './ecs/systems/EquipmentSystem.js';
+import { ConsumableSystem } from './ecs/systems/ConsumableSystem.js';
+import { WorldItemSystem } from './ecs/systems/WorldItemSystem.js';
+import { BankSystem } from './ecs/systems/BankSystem.js';
 
 // Manager imports
 import { initializeDatabase, createStatements } from './database/schema.js';
@@ -55,9 +60,28 @@ const world = new World();
 const networkSystem = new NetworkSystem(io);
 const persistenceSystem = new PersistenceSystem(db, statements);
 const combatSystem = new CombatSystem(world, io, statements);
+const inventorySystem = new InventorySystem(world, statements, io);
+const equipmentSystem = new EquipmentSystem(world, inventorySystem, io);
+const consumableSystem = new ConsumableSystem(world, inventorySystem, equipmentSystem, statements, io);
+const worldItemSystem = new WorldItemSystem(world, inventorySystem, roomManager, statements, io);
+const bankSystem = new BankSystem(world, inventorySystem, statements, io);
+
+// Load item definitions into cache
+inventorySystem.loadItemCache();
+
+// Load persistent world items from database
+worldItemSystem.loadWorldItems();
+
+// Link systems for persistence
+persistenceSystem.inventorySystem = inventorySystem;
+persistenceSystem.equipmentSystem = equipmentSystem;
 
 world.addSystem(new MovementSystem());
 world.addSystem(combatSystem);
+world.addSystem(equipmentSystem);
+world.addSystem(consumableSystem);
+world.addSystem(worldItemSystem);
+world.addSystem(bankSystem);
 world.addSystem(networkSystem);
 world.addSystem(persistenceSystem);
 
@@ -100,6 +124,23 @@ function getOrCreatePlayerEntity(userId, username, color, position) {
             position.max_hitpoints || 10,
             position.strength || 1
         ));
+        
+        // Add inventory/equipment/effects components
+        const inventory = new Inventory();
+        const equipment = new Equipment();
+        const activeEffects = new ActiveEffects();
+        entity.addComponent(inventory);
+        entity.addComponent(equipment);
+        entity.addComponent(activeEffects);
+        
+        // Load from database
+        inventorySystem.loadPlayerInventory(userId, inventory);
+        inventorySystem.loadPlayerEquipment(userId, equipment);
+        inventorySystem.loadPlayerEffects(userId, activeEffects);
+        
+        // Apply equipment bonuses
+        equipmentSystem.applyEquipmentBonuses(entity);
+        
         world.addEntity(entity);
         playerEntities.set(userId, entity.id);
     }
@@ -146,6 +187,10 @@ io.on('connection', (socket) => {
             const recentMessages = chatManager.getRecentMessages(50, savedRoomId);
             socket.emit('chatHistory', recentMessages);
             networkSystem.sendFullState(socket.id, savedRoomId);
+            
+            // Send world items in this room
+            const worldItems = worldItemSystem.getWorldItemsInRoom(savedRoomId);
+            socket.emit('worldItems', { items: worldItems });
 
             // Notify only players in same room
             roomManager.broadcastToRoom(savedRoomId, 'playerJoined', {
@@ -214,6 +259,10 @@ io.on('connection', (socket) => {
 
             // Send full game state for room
             networkSystem.sendFullState(socket.id, savedRoomId);
+            
+            // Send world items in this room
+            const worldItems = worldItemSystem.getWorldItemsInRoom(savedRoomId);
+            socket.emit('worldItems', { items: worldItems });
 
             // Notify only players in same room
             roomManager.broadcastToRoom(savedRoomId, 'playerJoined', {
@@ -340,20 +389,183 @@ io.on('connection', (socket) => {
         combatSystem.startCombat(entity, targetEntityId);
     });
 
+    // ============ INVENTORY/EQUIPMENT/BANK HANDLERS ============
+
+    // Get inventory data
+    socket.on('getInventory', (callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const entity = world.getEntity(playerEntities.get(userId));
+        if (!entity) return callback({ success: false, error: 'No entity' });
+        
+        const inventory = entity.getComponent(Inventory);
+        const equipment = entity.getComponent(Equipment);
+        const activeEffects = entity.getComponent(ActiveEffects);
+        
+        callback({
+            success: true,
+            inventory: inventorySystem.getInventoryWithDetails(inventory),
+            equipment: inventorySystem.getEquipmentWithDetails(equipment),
+            effects: activeEffects ? activeEffects.effects : []
+        });
+    });
+
+    // Equip item from inventory
+    socket.on('equipItem', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const entity = world.getEntity(playerEntities.get(userId));
+        if (!entity) return callback({ success: false, error: 'No entity' });
+        
+        const result = equipmentSystem.equipItem(entity, data.slotIndex);
+        callback(result);
+    });
+
+    // Unequip item to inventory
+    socket.on('unequipItem', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const entity = world.getEntity(playerEntities.get(userId));
+        if (!entity) return callback({ success: false, error: 'No entity' });
+        
+        const result = equipmentSystem.unequipItem(entity, data.slot);
+        callback(result);
+    });
+
+    // Use consumable item
+    socket.on('useItem', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const entity = world.getEntity(playerEntities.get(userId));
+        if (!entity) return callback({ success: false, error: 'No entity' });
+        
+        const result = consumableSystem.useConsumable(entity, data.slotIndex);
+        callback(result);
+    });
+
+    // Drop item to ground
+    socket.on('dropItem', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const entity = world.getEntity(playerEntities.get(userId));
+        if (!entity) return callback({ success: false, error: 'No entity' });
+        
+        const result = worldItemSystem.dropItem(entity, data.slotIndex, data.quantity || 1);
+        callback(result);
+    });
+
+    // Pickup item from ground (dynamic world items)
+    socket.on('pickupItem', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const entity = world.getEntity(playerEntities.get(userId));
+        if (!entity) return callback({ success: false, error: 'No entity' });
+        
+        const result = worldItemSystem.pickupItem(entity, data.worldItemEntityId);
+        callback(result);
+    });
+
+    // Pickup static room item (placed in editor with pickup interaction)
+    socket.on('pickupWorldItem', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const entity = world.getEntity(playerEntities.get(userId));
+        if (!entity) return callback({ success: false, error: 'No entity' });
+        
+        const { itemId, objectId } = data;
+        if (!itemId) {
+            return callback({ success: false, error: 'No item configured for this object' });
+        }
+        
+        // Add item to player inventory
+        const result = inventorySystem.addItemToPlayer(entity, parseInt(itemId), 1);
+        if (result.success) {
+            // Notify room to remove the object (optional - could make it respawn)
+            const roomId = roomManager.getPlayerRoom(socket.id);
+            if (roomId) {
+                io.to(`room-${roomId}`).emit('objectPickedUp', { objectId });
+            }
+        }
+        callback(result);
+    });
+
+    // Open bank
+    socket.on('openBank', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const entity = world.getEntity(playerEntities.get(userId));
+        if (!entity) return callback({ success: false, error: 'No entity' });
+        
+        const result = bankSystem.openBank(entity, data.bankPosition);
+        callback(result);
+    });
+
+    // Close bank
+    socket.on('closeBank', () => {
+        bankSystem.closeBank(socket.id);
+    });
+
+    // Deposit item to bank
+    socket.on('depositItem', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const entity = world.getEntity(playerEntities.get(userId));
+        if (!entity) return callback({ success: false, error: 'No entity' });
+        
+        const result = bankSystem.depositItem(entity, data.inventorySlot, data.quantity || 1);
+        callback(result);
+    });
+
+    // Withdraw item from bank
+    socket.on('withdrawItem', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const entity = world.getEntity(playerEntities.get(userId));
+        if (!entity) return callback({ success: false, error: 'No entity' });
+        
+        const result = bankSystem.withdrawItem(entity, data.bankSlot, data.quantity || 1);
+        callback(result);
+    });
+
+    // Get all item definitions (for client cache)
+    socket.on('getItemDefinitions', (callback) => {
+        const items = statements.getAllItems.all();
+        callback({ success: true, items: items.map(i => ({ ...i, stats: JSON.parse(i.stats_json || '{}') })) });
+    });
+
+    // ============ END INVENTORY/EQUIPMENT/BANK HANDLERS ============
+
     // Handle disconnect
     socket.on('disconnect', () => {
         console.log(`Client disconnected: ${socket.id}`);
         
+        // Close bank session if open
+        bankSystem.closeBank(socket.id);
+        
         const userId = authManager.logout(socket.id);
         if (userId) {
-            // Save player state
-            persistenceSystem.savePlayer(userId);
-
-            // Update entity
+            // Save player state including inventory/equipment
             const entityId = playerEntities.get(userId);
             if (entityId) {
                 const entity = world.getEntity(entityId);
                 if (entity) {
+                    const inventory = entity.getComponent(Inventory);
+                    const equipment = entity.getComponent(Equipment);
+                    
+                    // Save inventory and equipment
+                    if (inventory) inventorySystem.savePlayerInventory(userId, inventory);
+                    if (equipment) equipmentSystem.savePlayerEquipment(userId, equipment, statements);
+                    
                     const player = entity.getComponent(Player);
                     player.isOnline = false;
                     player.socketId = null;
@@ -362,6 +574,8 @@ io.on('connection', (socket) => {
                     io.emit('playerLeft', { userId, username: player.username });
                 }
             }
+            
+            persistenceSystem.savePlayer(userId);
         }
         
         // Leave room
@@ -462,6 +676,10 @@ io.on('connection', (socket) => {
             
             // Send full state for the new room (only players in this room)
             networkSystem.sendFullState(socket.id, roomId);
+            
+            // Send world items in this room
+            const worldItems = worldItemSystem.getWorldItemsInRoom(roomId);
+            socket.emit('worldItems', { items: worldItems });
         }
         callback(result);
     });
@@ -524,6 +742,105 @@ io.on('connection', (socket) => {
         }
         const assets = assetManager.refresh();
         callback({ success: true, assets: assetManager.getAssetsByCategory() });
+    });
+
+    // =====================
+    // ADMIN ITEM MANAGEMENT
+    // =====================
+
+    // Get all item definitions (admin)
+    socket.on('adminGetItems', (data, callback) => {
+        const { adminToken } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        const items = statements.getAllItems.all();
+        console.log('Admin items list:', items.length, 'items');
+        callback({ 
+            success: true, 
+            items: items.map(i => ({ ...i, stats: JSON.parse(i.stats_json || '{}') }))
+        });
+    });
+
+    // Get online players list (admin)
+    socket.on('adminGetPlayers', (data, callback) => {
+        const { adminToken } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        const players = [];
+        for (const [odUserId, entityId] of playerEntities) {
+            const entity = world.getEntity(entityId);
+            if (entity) {
+                const player = entity.getComponent(Player);
+                if (player && player.isOnline) {
+                    players.push({ odUserId: odUserId, odUsername: player.username });
+                }
+            }
+        }
+        console.log('Admin players list:', players.length, 'online');
+        callback({ success: true, players });
+    });
+
+    // Spawn item to player inventory (admin)
+    socket.on('adminSpawnItem', (data, callback) => {
+        const { adminToken, odUserId, itemId, quantity } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        
+        // Convert to number since playerEntities uses numeric keys
+        const numericUserId = parseInt(odUserId);
+        const entityId = playerEntities.get(numericUserId);
+        if (!entityId) {
+            callback({ success: false, error: 'Player not found or offline' });
+            return;
+        }
+        
+        const entity = world.getEntity(entityId);
+        if (!entity) {
+            callback({ success: false, error: 'Player entity not found' });
+            return;
+        }
+        
+        const result = inventorySystem.addItemToPlayer(entity, itemId, quantity || 1);
+        callback(result);
+    });
+
+    // Update item definition (admin)
+    socket.on('adminUpdateItem', (data, callback) => {
+        const { adminToken, itemId, updates } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        
+        try {
+            const statsJson = JSON.stringify(updates.stats || {});
+            statements.updateItem.run(
+                updates.name,
+                updates.type,
+                updates.slot || null,
+                statsJson,
+                updates.stackable ? 1 : 0,
+                updates.maxStack || 1,
+                updates.description || '',
+                updates.model_id || 'cube',
+                updates.icon || '📦',
+                itemId
+            );
+            inventorySystem.loadItemCache(); // Refresh cache
+            callback({ success: true });
+        } catch (err) {
+            callback({ success: false, error: err.message });
+        }
     });
 });
 

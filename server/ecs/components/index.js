@@ -87,6 +87,7 @@ export class Combat {
         this.hitpoints = hitpoints;
         this.maxHitpoints = maxHitpoints;
         this.strength = strength;
+        this.defense = 0; // Base defense
         this.inCombat = false;
         this.targetEntityId = null;
         this.lastAttackTime = 0;
@@ -98,7 +99,184 @@ export class Combat {
             hitpoints: this.hitpoints,
             maxHitpoints: this.maxHitpoints,
             strength: this.strength,
+            defense: this.defense,
             inCombat: this.inCombat
+        };
+    }
+}
+
+// Inventory component - 28 slots for items
+export class Inventory {
+    constructor() {
+        this.slots = new Array(28).fill(null); // 28 inventory slots
+        this.maxSlots = 28;
+    }
+
+    // Add item to first available slot or stack
+    addItem(itemId, quantity = 1, durability = 100, itemData = null) {
+        // Try to stack with existing items first
+        if (itemData && itemData.stackable) {
+            for (let i = 0; i < this.maxSlots; i++) {
+                const slot = this.slots[i];
+                if (slot && slot.itemId === itemId && slot.quantity < itemData.max_stack) {
+                    const canAdd = Math.min(quantity, itemData.max_stack - slot.quantity);
+                    slot.quantity += canAdd;
+                    quantity -= canAdd;
+                    if (quantity <= 0) return { success: true, slotIndex: i };
+                }
+            }
+        }
+        // Find first empty slot for remaining quantity
+        for (let i = 0; i < this.maxSlots; i++) {
+            if (!this.slots[i]) {
+                this.slots[i] = { itemId, quantity, durability };
+                return { success: true, slotIndex: i };
+            }
+        }
+        return { success: false, reason: 'Inventory full' };
+    }
+
+    removeItem(slotIndex, quantity = 1) {
+        if (slotIndex < 0 || slotIndex >= this.maxSlots) return false;
+        const slot = this.slots[slotIndex];
+        if (!slot) return false;
+        slot.quantity -= quantity;
+        if (slot.quantity <= 0) {
+            this.slots[slotIndex] = null;
+        }
+        return true;
+    }
+
+    getSlot(slotIndex) {
+        return this.slots[slotIndex] || null;
+    }
+
+    getFirstEmptySlot() {
+        return this.slots.findIndex(s => s === null);
+    }
+
+    isFull() {
+        return this.slots.every(s => s !== null);
+    }
+
+    serialize() {
+        return { slots: this.slots, maxSlots: this.maxSlots };
+    }
+}
+
+// Equipment component - paper doll slots
+export class Equipment {
+    constructor() {
+        this.head = null;
+        this.body = null;
+        this.legs = null;
+        this.weapon = null;
+        this.shield = null;
+        // Cached stat bonuses from equipment
+        this.bonusAttack = 0;
+        this.bonusDefense = 0;
+    }
+
+    equip(slot, itemId, durability = 100, stats = {}) {
+        if (!['head', 'body', 'legs', 'weapon', 'shield'].includes(slot)) {
+            return { success: false, reason: 'Invalid slot' };
+        }
+        const previousItem = this[slot];
+        this[slot] = { itemId, durability, stats };
+        this.recalculateBonuses();
+        return { success: true, previousItem };
+    }
+
+    unequip(slot) {
+        if (!this[slot]) return null;
+        const item = this[slot];
+        this[slot] = null;
+        this.recalculateBonuses();
+        return item;
+    }
+
+    recalculateBonuses() {
+        this.bonusAttack = 0;
+        this.bonusDefense = 0;
+        for (const slot of ['head', 'body', 'legs', 'weapon', 'shield']) {
+            if (this[slot] && this[slot].stats) {
+                this.bonusAttack += this[slot].stats.attack || 0;
+                this.bonusDefense += this[slot].stats.defense || 0;
+            }
+        }
+    }
+
+    serialize() {
+        return {
+            head: this.head,
+            body: this.body,
+            legs: this.legs,
+            weapon: this.weapon,
+            shield: this.shield,
+            bonusAttack: this.bonusAttack,
+            bonusDefense: this.bonusDefense
+        };
+    }
+}
+
+// ActiveEffects component - temporary buffs from consumables
+export class ActiveEffects {
+    constructor() {
+        this.effects = []; // { type, value, expiresAt }
+    }
+
+    addEffect(type, value, duration) {
+        const expiresAt = Date.now() + duration;
+        this.effects.push({ type, value, expiresAt });
+    }
+
+    removeExpired() {
+        const now = Date.now();
+        this.effects = this.effects.filter(e => e.expiresAt > now);
+    }
+
+    getBonus(type) {
+        const now = Date.now();
+        return this.effects
+            .filter(e => e.type === type && e.expiresAt > now)
+            .reduce((sum, e) => sum + e.value, 0);
+    }
+
+    getStrengthBonus() {
+        return this.getBonus('strength_boost');
+    }
+
+    getDefenseBonus() {
+        return this.getBonus('defense_boost');
+    }
+
+    serialize() {
+        return { effects: this.effects };
+    }
+}
+
+// WorldItem component - items dropped on ground
+export class WorldItem {
+    constructor(itemId, quantity = 1, durability = 100) {
+        this.itemId = itemId;
+        this.quantity = quantity;
+        this.durability = durability;
+        this.droppedAt = Date.now();
+        this.despawnTime = 120000; // 2 minutes
+        this.droppedBy = null; // userId of player who dropped it
+    }
+
+    isExpired() {
+        return Date.now() - this.droppedAt >= this.despawnTime;
+    }
+
+    serialize() {
+        return {
+            itemId: this.itemId,
+            quantity: this.quantity,
+            durability: this.durability,
+            droppedAt: this.droppedAt,
+            despawnTime: this.despawnTime
         };
     }
 }

@@ -1,6 +1,6 @@
 // Persistence System - saves game state to SQLite every 5 seconds
 
-import { Transform, Player } from '../components/index.js';
+import { Transform, Player, Inventory, Equipment } from '../components/index.js';
 
 export class PersistenceSystem {
     constructor(db, statements) {
@@ -10,6 +10,8 @@ export class PersistenceSystem {
         this.saveInterval = 5000; // 5 seconds
         this.lastSave = Date.now();
         this.pendingSaves = new Set();
+        this.inventorySystem = null; // Set by server.js
+        this.equipmentSystem = null; // Set by server.js
     }
 
     init() {
@@ -39,14 +41,28 @@ export class PersistenceSystem {
             for (const entity of entities) {
                 const player = entity.getComponent(Player);
                 const transform = entity.getComponent(Transform);
+                const inventory = entity.getComponent(Inventory);
+                const equipment = entity.getComponent(Equipment);
 
                 try {
+                    // Save position
                     this.statements.updatePlayerState.run(
                         transform.x,
                         transform.y,
                         transform.z,
                         player.userId
                     );
+                    
+                    // Save inventory if systems are available
+                    if (inventory && this.inventorySystem) {
+                        this.inventorySystem.savePlayerInventory(player.userId, inventory);
+                    }
+                    
+                    // Save equipment
+                    if (equipment && this.equipmentSystem) {
+                        this.equipmentSystem.savePlayerEquipment(player.userId, equipment, this.statements);
+                    }
+                    
                     savedCount++;
                 } catch (err) {
                     console.error(`Failed to save player ${player.username}:`, err);

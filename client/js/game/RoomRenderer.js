@@ -158,4 +158,16 @@ export class RoomRenderer {
             this.loadRoom(roomId, layout);
         }
     }
+
+    // Remove a specific object from the room (e.g., when picked up)
+    removeObject(objectId) {
+        const mesh = this.roomObjects.get(objectId);
+        if (mesh) {
+            this.scene.remove(mesh);
+            this.disposeMesh(mesh);
+            this.roomObjects.delete(objectId);
+            return true;
+        }
+        return false;
+    }
 }

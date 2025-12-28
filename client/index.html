@@ -2,10 +2,11 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Simple MMO</title>
     <link rel="stylesheet" href="css/styles.css">
     <link rel="stylesheet" href="css/editor.css">
+    <link rel="stylesheet" href="css/inventory.css">
 </head>
 <body>
     <!-- Login/Register Screen -->
@@ -37,6 +38,12 @@
 
     <!-- Game Screen (hidden until login) -->
     <div id="game-screen" style="display:none;">
+        <!-- Inventory & Equipment Toggle Buttons -->
+        <div id="game-ui-buttons">
+            <button id="inventory-toggle-btn" title="Inventory (I)">🎒</button>
+            <button id="equipment-toggle-btn" title="Equipment (E)">⚔️</button>
+        </div>
+        
         <!-- Health Bar UI -->
         <div id="health-bar-container">
             <div id="health-bar-label">HP</div>

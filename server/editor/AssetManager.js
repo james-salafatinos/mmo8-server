@@ -27,11 +27,13 @@ export class AssetManager {
             { id: 'primitive:torus', name: 'Torus', category: 'Primitives', type: 'primitive', primitive: 'torus', defaultScale: { x: 1, y: 1, z: 1 } }
         ];
         
-        // Marker types (spawn points, portals, etc.)
+        // Marker types (spawn points, portals, banks, item spawns, etc.)
         this.markerTypes = [
             { id: 'marker:spawn', name: 'Spawn Point', category: 'Markers', type: 'marker', markerType: 'spawn' },
             { id: 'marker:portal', name: 'Portal/Door', category: 'Markers', type: 'marker', markerType: 'portal' },
-            { id: 'marker:anchor', name: 'Named Anchor', category: 'Markers', type: 'marker', markerType: 'anchor' }
+            { id: 'marker:anchor', name: 'Named Anchor', category: 'Markers', type: 'marker', markerType: 'anchor' },
+            { id: 'marker:bank', name: 'Bank', category: 'Markers', type: 'marker', markerType: 'bank' },
+            { id: 'marker:item_spawn', name: 'Item Spawn', category: 'Markers', type: 'marker', markerType: 'item_spawn' }
         ];
         
         // Ensure assets directory exists

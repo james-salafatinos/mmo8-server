@@ -1,5 +1,5 @@
 // Database schema and initialization for SQLite
-// Tables: users, messages, player_state
+// Tables: users, messages, player_state, items, player_inventory, player_bank, world_items, active_effects
 
 export function initializeDatabase(db) {
     // Users table - authentication
@@ -106,6 +106,116 @@ export function initializeDatabase(db) {
         console.error('Migration error (current_room_id):', err);
     }
 
+    // Items table - static item definitions
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            type TEXT NOT NULL CHECK(type IN ('weapon', 'armor', 'consumable', 'misc')),
+            slot TEXT DEFAULT NULL CHECK(slot IN ('head', 'body', 'legs', 'weapon', 'shield', NULL)),
+            stats_json TEXT DEFAULT '{}',
+            consumable_effect TEXT DEFAULT NULL CHECK(consumable_effect IN ('heal', 'strength_boost', 'defense_boost', NULL)),
+            effect_value INTEGER DEFAULT 0,
+            effect_duration INTEGER DEFAULT 0,
+            stackable BOOLEAN DEFAULT 0,
+            max_stack INTEGER DEFAULT 1,
+            description TEXT DEFAULT '',
+            model_id TEXT DEFAULT 'cube'
+        )
+    `);
+
+    // Player inventory table - 28 slots per player
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS player_inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            item_id INTEGER NOT NULL,
+            slot_index INTEGER NOT NULL CHECK(slot_index >= 0 AND slot_index < 28),
+            quantity INTEGER DEFAULT 1,
+            durability INTEGER DEFAULT 100,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (item_id) REFERENCES items(id),
+            UNIQUE(user_id, slot_index)
+        )
+    `);
+
+    // Player bank table - 200 slots for storage
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS player_bank (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            item_id INTEGER NOT NULL,
+            slot_index INTEGER NOT NULL CHECK(slot_index >= 0 AND slot_index < 200),
+            quantity INTEGER DEFAULT 1,
+            durability INTEGER DEFAULT 100,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (item_id) REFERENCES items(id),
+            UNIQUE(user_id, slot_index)
+        )
+    `);
+
+    // Player equipment table - equipped items
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS player_equipment (
+            user_id INTEGER NOT NULL,
+            slot TEXT NOT NULL CHECK(slot IN ('head', 'body', 'legs', 'weapon', 'shield')),
+            item_id INTEGER NOT NULL,
+            durability INTEGER DEFAULT 100,
+            PRIMARY KEY (user_id, slot),
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (item_id) REFERENCES items(id)
+        )
+    `);
+
+    // Active effects table - temporary buffs from consumables
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS active_effects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            effect_type TEXT NOT NULL CHECK(effect_type IN ('strength_boost', 'defense_boost')),
+            effect_value INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    `);
+
+    // World items table - persistent items on ground
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS world_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            room_id INTEGER NOT NULL,
+            item_id INTEGER NOT NULL,
+            x REAL NOT NULL,
+            y REAL NOT NULL,
+            z REAL NOT NULL,
+            quantity INTEGER DEFAULT 1,
+            durability INTEGER DEFAULT 100,
+            dropped_by INTEGER DEFAULT NULL,
+            dropped_at INTEGER DEFAULT (strftime('%s', 'now') * 1000),
+            FOREIGN KEY (room_id) REFERENCES rooms(id),
+            FOREIGN KEY (item_id) REFERENCES items(id),
+            FOREIGN KEY (dropped_by) REFERENCES users(id)
+        )
+    `);
+
+    // Create indexes for inventory/bank performance
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_inventory_user ON player_inventory(user_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_bank_user ON player_bank(user_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_effects_user ON active_effects(user_id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_effects_expires ON active_effects(expires_at)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_world_items_room ON world_items(room_id)`);
+
+    // Migration: Add icon column to items if it doesn't exist
+    try {
+        const itemCols = db.prepare("PRAGMA table_info(items)").all();
+        const itemColNames = itemCols.map(c => c.name);
+        if (!itemColNames.includes('icon')) {
+            db.exec(`ALTER TABLE items ADD COLUMN icon TEXT DEFAULT '📦'`);
+        }
+    } catch (err) {
+        console.error('Migration error (items icon):', err);
+    }
+
     // Create default room if none exists
     try {
         const roomCount = db.prepare("SELECT COUNT(*) as count FROM rooms").get();
@@ -119,7 +229,54 @@ export function initializeDatabase(db) {
         console.error('Error creating default room:', err);
     }
 
+    // Seed initial items if none exist
+    seedItems(db);
+
     console.log('Database schema initialized');
+}
+
+// Seed initial items
+function seedItems(db) {
+    try {
+        const itemCount = db.prepare("SELECT COUNT(*) as count FROM items").get();
+        if (itemCount.count > 0) return;
+
+        const insertItem = db.prepare(`
+            INSERT INTO items (name, type, slot, stats_json, consumable_effect, effect_value, effect_duration, stackable, max_stack, description, model_id, icon)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        // Weapons
+        insertItem.run('Bronze Sword', 'weapon', 'weapon', '{"attack":2}', null, 0, 0, 0, 1, 'A basic bronze sword.', 'sword_bronze', '⚔️');
+        insertItem.run('Iron Sword', 'weapon', 'weapon', '{"attack":5}', null, 0, 0, 0, 1, 'A sturdy iron sword.', 'sword_iron', '🗡️');
+
+        // Armor - Head
+        insertItem.run('Leather Hood', 'armor', 'head', '{"defense":1}', null, 0, 0, 0, 1, 'A simple leather hood.', 'armor_head_leather', '🎩');
+
+        // Armor - Body
+        insertItem.run('Leather Body', 'armor', 'body', '{"defense":3}', null, 0, 0, 0, 1, 'A leather chestpiece.', 'armor_body_leather', '🦺');
+
+        // Armor - Legs
+        insertItem.run('Leather Legs', 'armor', 'legs', '{"defense":2}', null, 0, 0, 0, 1, 'Leather leg armor.', 'armor_legs_leather', '👖');
+
+        // Shield
+        insertItem.run('Wooden Shield', 'armor', 'shield', '{"defense":2}', null, 0, 0, 0, 1, 'A basic wooden shield.', 'shield_wood', '🛡️');
+
+        // Consumables - Food
+        insertItem.run('Bread', 'consumable', null, '{}', 'heal', 5, 0, 1, 20, 'Heals 5 HP instantly.', 'food_bread', '🍞');
+        insertItem.run('Cooked Meat', 'consumable', null, '{}', 'heal', 10, 0, 1, 20, 'Heals 10 HP instantly.', 'food_meat', '🍖');
+
+        // Consumables - Potions
+        insertItem.run('Strength Potion', 'consumable', null, '{}', 'strength_boost', 3, 60000, 1, 10, '+3 strength for 60 seconds.', 'potion_red', '🧪');
+        insertItem.run('Defense Potion', 'consumable', null, '{}', 'defense_boost', 5, 60000, 1, 10, '+5 defense for 60 seconds.', 'potion_blue', '🧴');
+
+        // Misc
+        insertItem.run('Coins', 'misc', null, '{}', null, 0, 0, 1, 999999, 'Gold coins.', 'coins', '🪙');
+
+        console.log('Seeded initial items');
+    } catch (err) {
+        console.error('Error seeding items:', err);
+    }
 }
 
 // Prepared statements for common operations
@@ -211,6 +368,91 @@ export function createStatements(db) {
 
         // Player room state
         updatePlayerRoom: db.prepare(`UPDATE player_state SET current_room_id = ? WHERE user_id = ?`),
-        getPlayerRoom: db.prepare(`SELECT current_room_id FROM player_state WHERE user_id = ?`)
+        getPlayerRoom: db.prepare(`SELECT current_room_id FROM player_state WHERE user_id = ?`),
+
+        // Item operations
+        getItemById: db.prepare(`SELECT * FROM items WHERE id = ?`),
+        getItemByName: db.prepare(`SELECT * FROM items WHERE name = ?`),
+        getAllItems: db.prepare(`SELECT * FROM items ORDER BY type, name`),
+        updateItem: db.prepare(`
+            UPDATE items SET name = ?, type = ?, slot = ?, stats_json = ?, 
+            stackable = ?, max_stack = ?, description = ?, model_id = ?, icon = ?
+            WHERE id = ?
+        `),
+
+        // Inventory operations
+        getInventory: db.prepare(`
+            SELECT pi.*, i.name, i.type, i.slot, i.stats_json, i.consumable_effect, 
+                   i.effect_value, i.effect_duration, i.stackable, i.max_stack, i.description, i.model_id, i.icon
+            FROM player_inventory pi
+            JOIN items i ON pi.item_id = i.id
+            WHERE pi.user_id = ?
+            ORDER BY pi.slot_index
+        `),
+        getInventorySlot: db.prepare(`SELECT * FROM player_inventory WHERE user_id = ? AND slot_index = ?`),
+        addToInventory: db.prepare(`
+            INSERT INTO player_inventory (user_id, item_id, slot_index, quantity, durability)
+            VALUES (?, ?, ?, ?, ?)
+        `),
+        updateInventorySlot: db.prepare(`
+            UPDATE player_inventory SET quantity = ?, durability = ? WHERE user_id = ? AND slot_index = ?
+        `),
+        removeFromInventory: db.prepare(`DELETE FROM player_inventory WHERE user_id = ? AND slot_index = ?`),
+        clearInventory: db.prepare(`DELETE FROM player_inventory WHERE user_id = ?`),
+
+        // Bank operations
+        getBank: db.prepare(`
+            SELECT pb.*, i.name, i.type, i.slot, i.stats_json, i.stackable, i.max_stack, i.description, i.model_id, i.icon
+            FROM player_bank pb
+            JOIN items i ON pb.item_id = i.id
+            WHERE pb.user_id = ?
+            ORDER BY pb.slot_index
+        `),
+        getBankSlot: db.prepare(`SELECT * FROM player_bank WHERE user_id = ? AND slot_index = ?`),
+        addToBank: db.prepare(`
+            INSERT INTO player_bank (user_id, item_id, slot_index, quantity, durability)
+            VALUES (?, ?, ?, ?, ?)
+        `),
+        updateBankSlot: db.prepare(`
+            UPDATE player_bank SET quantity = ?, durability = ? WHERE user_id = ? AND slot_index = ?
+        `),
+        removeFromBank: db.prepare(`DELETE FROM player_bank WHERE user_id = ? AND slot_index = ?`),
+
+        // Equipment operations
+        getEquipment: db.prepare(`
+            SELECT pe.*, i.name, i.type, i.stats_json, i.description, i.model_id
+            FROM player_equipment pe
+            JOIN items i ON pe.item_id = i.id
+            WHERE pe.user_id = ?
+        `),
+        getEquipmentSlot: db.prepare(`SELECT * FROM player_equipment WHERE user_id = ? AND slot = ?`),
+        equipItem: db.prepare(`
+            INSERT OR REPLACE INTO player_equipment (user_id, slot, item_id, durability)
+            VALUES (?, ?, ?, ?)
+        `),
+        unequipItem: db.prepare(`DELETE FROM player_equipment WHERE user_id = ? AND slot = ?`),
+
+        // Active effects operations
+        getActiveEffects: db.prepare(`SELECT * FROM active_effects WHERE user_id = ? AND expires_at > ?`),
+        addActiveEffect: db.prepare(`
+            INSERT INTO active_effects (user_id, effect_type, effect_value, expires_at)
+            VALUES (?, ?, ?, ?)
+        `),
+        removeExpiredEffects: db.prepare(`DELETE FROM active_effects WHERE expires_at <= ?`),
+        clearPlayerEffects: db.prepare(`DELETE FROM active_effects WHERE user_id = ?`),
+
+        // World items operations (persistent ground items)
+        getWorldItemsByRoom: db.prepare(`
+            SELECT wi.*, i.name, i.type, i.model_id, i.icon
+            FROM world_items wi
+            JOIN items i ON wi.item_id = i.id
+            WHERE wi.room_id = ?
+        `),
+        addWorldItem: db.prepare(`
+            INSERT INTO world_items (room_id, item_id, x, y, z, quantity, durability, dropped_by, dropped_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `),
+        removeWorldItem: db.prepare(`DELETE FROM world_items WHERE id = ?`),
+        clearRoomWorldItems: db.prepare(`DELETE FROM world_items WHERE room_id = ?`)
     };
 }
