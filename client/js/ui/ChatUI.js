@@ -4,24 +4,16 @@ export class ChatUI {
     constructor(networkManager) {
         this.networkManager = networkManager;
         this.currentUser = null;
+        this.contentElement = null;
+        this.messagesDiv = null;
+        this.input = null;
     }
 
     init(userData) {
         this.currentUser = userData.user;
-
-        const input = document.getElementById('chat-input');
-        const sendBtn = document.getElementById('send-button');
-        const messagesDiv = document.getElementById('chat-messages');
-
-        // Send message on button click
-        sendBtn.addEventListener('click', () => this.sendMessage());
-
-        // Send message on Enter key
-        input.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                this.sendMessage();
-            }
-        });
+        
+        // Build the content element
+        this.buildContentElement();
 
         // Listen for chat messages
         this.networkManager.onChatMessage((msg) => {
@@ -30,14 +22,49 @@ export class ChatUI {
 
         // Listen for chat history
         this.networkManager.onChatHistory((messages) => {
-            messagesDiv.innerHTML = '';
-            messages.forEach(msg => this.displayMessage(msg));
+            if (this.messagesDiv) {
+                this.messagesDiv.innerHTML = '';
+                messages.forEach(msg => this.displayMessage(msg));
+            }
         });
+    }
+    
+    buildContentElement() {
+        this.contentElement = document.createElement('div');
+        this.contentElement.className = 'chat-panel-content';
+        this.contentElement.innerHTML = `
+            <div id="chat-messages" class="chat-messages-area"></div>
+            <div class="chat-input-row">
+                <input type="text" id="chat-input" class="chat-input-field" placeholder="Message... (/w username for whisper)">
+                <button id="send-button" class="chat-send-btn">Send</button>
+            </div>
+        `;
+        
+        this.messagesDiv = this.contentElement.querySelector('#chat-messages');
+        this.input = this.contentElement.querySelector('#chat-input');
+        const sendBtn = this.contentElement.querySelector('#send-button');
+        
+        // Send message on button click
+        sendBtn.addEventListener('click', () => this.sendMessage());
+        
+        // Send message on Enter key
+        this.input.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                this.sendMessage();
+            }
+        });
+    }
+    
+    getContentElement() {
+        if (!this.contentElement) {
+            this.buildContentElement();
+        }
+        return this.contentElement;
     }
 
     sendMessage() {
-        const input = document.getElementById('chat-input');
-        const message = input.value.trim();
+        if (!this.input) return;
+        const message = this.input.value.trim();
 
         if (!message) return;
 
@@ -52,11 +79,11 @@ export class ChatUI {
             this.networkManager.sendChat(message);
         }
 
-        input.value = '';
+        this.input.value = '';
     }
 
     displayMessage(msg) {
-        const messagesDiv = document.getElementById('chat-messages');
+        if (!this.messagesDiv) return;
         const msgElement = document.createElement('div');
         msgElement.className = 'chat-message';
 
@@ -77,8 +104,8 @@ export class ChatUI {
             `;
         }
 
-        messagesDiv.appendChild(msgElement);
-        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        this.messagesDiv.appendChild(msgElement);
+        this.messagesDiv.scrollTop = this.messagesDiv.scrollHeight;
     }
 
     escapeHtml(text) {

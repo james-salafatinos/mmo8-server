@@ -38,12 +38,40 @@
 
     <!-- Game Screen (hidden until login) -->
     <div id="game-screen" style="display:none;">
-        <!-- Top-left minimal controls (room selector, admin) -->
+        <!-- Top-left minimal controls (room selector, admin, leaderboard, players online) -->
         <div id="top-left-controls">
             <div id="room-selector"></div>
+            <button id="leaderboard-btn" title="Leaderboard">🏆</button>
+            <div id="user-count">0 online</div>
         </div>
         
-      
+        <!-- Game UI Dock (Runescape-style, docked to bottom) -->
+        <div id="game-ui-dock">
+            <!-- Tab buttons row -->
+            <div id="game-ui-tabs">
+                <button id="chat-toggle-btn" class="game-tab-btn" data-tab="chat" title="Chat">💬</button>
+                <button id="levels-toggle-btn" class="game-tab-btn" data-tab="levels" title="Levels">❤️</button>
+                <button id="inventory-toggle-btn" class="game-tab-btn" data-tab="inventory" title="Inventory">🎒</button>
+                <button id="equipment-toggle-btn" class="game-tab-btn" data-tab="equipment" title="Equipment">⚔️</button>
+                <button id="spellbook-toggle-btn" class="game-tab-btn" data-tab="spellbook" title="Spell Book">📖</button>
+                <button id="quests-toggle-btn" class="game-tab-btn" data-tab="quests" title="Quest Log">📜</button>
+                <button id="notepad-toggle-btn" class="game-tab-btn" data-tab="notepad" title="Notepad">📝</button>
+                <button id="music-toggle-btn" class="game-tab-btn" data-tab="music" title="Music">🎵</button>
+                <button id="settings-toggle-btn" class="game-tab-btn" data-tab="settings" title="Settings">⚙️</button>
+                <button id="logout-toggle-btn" class="game-tab-btn" data-tab="logout" title="Logout">🚪</button>
+            </div>
+            
+            <!-- Unified content panel (consistent size for all tabs) -->
+            <div id="game-panel-container" style="display:none;">
+                <div id="game-panel-header">
+                    <span id="game-panel-title">Panel</span>
+                    <button id="game-panel-close" class="game-panel-close-btn">✕</button>
+                </div>
+                <div id="game-panel-content">
+                    <!-- Content will be injected here by UI managers -->
+                </div>
+            </div>
+        </div>
 
         <!-- Death Screen -->
         <div id="death-screen" style="display:none;">
@@ -82,47 +110,6 @@
 
         <div class="container">
             <div id="scene-container"></div>
-            
-            <div id="chat-container">
-                <div id="chat-header">
-                    <h2>Chat</h2>
-                      <!-- Game UI Dock (Runescape-style, attached to canvas) -->
-        <div id="game-ui-dock">
-            <!-- Tab buttons row -->
-            <div id="game-ui-tabs">
-                <button id="levels-toggle-btn" class="game-tab-btn" data-tab="levels" title="Levels">❤️</button>
-                <button id="inventory-toggle-btn" class="game-tab-btn" data-tab="inventory" title="Inventory">🎒</button>
-                <button id="equipment-toggle-btn" class="game-tab-btn" data-tab="equipment" title="Equipment">⚔️</button>
-                <button id="spellbook-toggle-btn" class="game-tab-btn" data-tab="spellbook" title="Spell Book">📖</button>
-                <button id="quests-toggle-btn" class="game-tab-btn" data-tab="quests" title="Quest Log">📜</button>
-                <button id="notepad-toggle-btn" class="game-tab-btn" data-tab="notepad" title="Notepad">📝</button>
-                <button id="music-toggle-btn" class="game-tab-btn" data-tab="music" title="Music">🎵</button>
-                <button id="settings-toggle-btn" class="game-tab-btn" data-tab="settings" title="Settings">⚙️</button>
-            </div>
-            
-            <!-- Unified content panel (consistent size for all tabs) -->
-            <div id="game-panel-container" style="display:none;">
-                <div id="game-panel-header">
-                    <span id="game-panel-title">Panel</span>
-                    <button id="game-panel-close" class="game-panel-close-btn">✕</button>
-                </div>
-                <div id="game-panel-content">
-                    <!-- Content will be injected here by UI managers -->
-                </div>
-            </div>
-        </div>
-                    <div id="chat-header-right">
-                        <button id="leaderboard-btn" title="Leaderboard">🏆</button>
-                        <button id="logout-btn" title="Logout">🚪</button>
-                        <div id="user-count">0 online</div>
-                    </div>
-                </div>
-                <div id="chat-messages"></div>
-                <div id="chat-input-container">
-                    <input type="text" id="chat-input" placeholder="Message... (/w username for whisper)">
-                    <button id="send-button">Send</button>
-                </div>
-            </div>
         </div>
     </div>
 

@@ -11,6 +11,7 @@ export class UIManager {
         
         // Tab display names
         this.tabNames = {
+            chat: '💬 Chat',
             levels: '❤️ Levels',
             inventory: '🎒 Inventory',
             equipment: '⚔️ Equipment',
@@ -18,7 +19,8 @@ export class UIManager {
             quests: '📜 Quest Log',
             notepad: '📝 Notepad',
             music: '🎵 Music',
-            settings: '⚙️ Settings'
+            settings: '⚙️ Settings',
+            logout: '🚪 Logout'
         };
         
         this.setupListeners();

@@ -10,6 +10,7 @@ import { QuestLogUI } from './ui/QuestLogUI.js';
 import { NotepadUI } from './ui/NotepadUI.js';
 import { SettingsUI } from './ui/SettingsUI.js';
 import { MusicUI } from './ui/MusicUI.js';
+import { LogoutUI } from './ui/LogoutUI.js';
 import { UIManager } from './ui/UIManager.js';
 import { NetworkManager } from './network/NetworkManager.js';
 import { EditorManager } from './editor/EditorManager.js';
@@ -33,6 +34,7 @@ const questLogUI = new QuestLogUI(networkManager);
 const notepadUI = new NotepadUI(networkManager);
 const settingsUI = new SettingsUI(networkManager);
 const musicUI = new MusicUI(networkManager);
+const logoutUI = new LogoutUI(networkManager);
 const uiManager = new UIManager();
 
 // Game instance (created after login)
@@ -68,6 +70,7 @@ networkManager.onLogin(async (userData) => {
     combatUI.setGame(game); // For hitsplat positioning on player
     
     // Register UI managers with UIManager
+    uiManager.registerUI('chat', chatUI);
     uiManager.registerUI('levels', combatUI);
     uiManager.registerUI('inventory', inventoryUI);
     uiManager.registerUI('equipment', equipmentUI);
@@ -76,6 +79,7 @@ networkManager.onLogin(async (userData) => {
     uiManager.registerUI('notepad', notepadUI);
     uiManager.registerUI('settings', settingsUI);
     uiManager.registerUI('music', musicUI);
+    uiManager.registerUI('logout', logoutUI);
     
     // SpellBook casting integration with game
     window.addEventListener('spellSelected', (e) => {
@@ -167,13 +171,7 @@ leaderboardOverlay.addEventListener('click', (e) => {
     }
 });
 
-// Logout button
-document.getElementById('logout-btn').addEventListener('click', () => {
-    if (confirm('Are you sure you want to logout?')) {
-        networkManager.clearSession();
-        window.location.reload();
-    }
-});
+// Note: Logout is now handled via LogoutUI in the game dock
 
 // Try auto-login first, then show auth UI if needed
 async function init() {
