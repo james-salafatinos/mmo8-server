@@ -1,11 +1,12 @@
 // Combat System - handles combat logic and damage calculation
-import { Transform, Player, Movement, Combat, Equipment, ActiveEffects } from '../components/index.js';
+import { Transform, Player, Movement, Combat, Equipment, ActiveEffects, NPC, AIBehavior } from '../components/index.js';
 
 export class CombatSystem {
     constructor(world, io, statements) {
         this.world = world;
         this.io = io;
         this.statements = statements;
+        this.npcSystem = null; // Will be set after initialization
         console.log('CombatSystem initialized');
     }
 
@@ -20,19 +21,23 @@ export class CombatSystem {
 
             const transform = entity.getComponent(Transform);
             const player = entity.getComponent(Player);
+            const npc = entity.getComponent(NPC);
             const movement = entity.getComponent(Movement);
             
-            if (!transform || !player) {
-                console.log('CombatSystem: Missing transform or player component');
+            // Must have transform and either player or npc
+            if (!transform || (!player && !npc)) {
                 continue;
             }
             
-            // console.log('CombatSystem update: Player', player.username, 'in combat, target:', combat.targetEntityId);
+            // Skip dead NPCs
+            if (npc && npc.isDead) {
+                this.stopCombat(entity);
+                continue;
+            }
 
             // Get target entity
             const targetEntity = this.world.getEntity(combat.targetEntityId);
             if (!targetEntity) {
-                // Target no longer exists
                 this.stopCombat(entity);
                 continue;
             }
@@ -40,8 +45,22 @@ export class CombatSystem {
             const targetTransform = targetEntity.getComponent(Transform);
             const targetCombat = targetEntity.getComponent(Combat);
             const targetPlayer = targetEntity.getComponent(Player);
+            const targetNpc = targetEntity.getComponent(NPC);
 
-            if (!targetTransform || !targetCombat || !targetPlayer) {
+            // Must have valid target with transform and combat
+            if (!targetTransform || !targetCombat) {
+                this.stopCombat(entity);
+                continue;
+            }
+            
+            // Target must be player or NPC
+            if (!targetPlayer && !targetNpc) {
+                this.stopCombat(entity);
+                continue;
+            }
+            
+            // Skip dead NPC targets
+            if (targetNpc && targetNpc.isDead) {
                 this.stopCombat(entity);
                 continue;
             }
@@ -57,7 +76,7 @@ export class CombatSystem {
             const dz = targetTransform.z - transform.z;
             const distance = Math.sqrt(dx * dx + dz * dz);
 
-            const attackRange = 1.5; // Must be within 1.5 units to attack
+            const attackRange = 1.5;
 
             if (distance > attackRange) {
                 // Move towards target
@@ -82,15 +101,31 @@ export class CombatSystem {
     performAttack(attackerEntity, defenderEntity) {
         const attackerCombat = attackerEntity.getComponent(Combat);
         const attackerPlayer = attackerEntity.getComponent(Player);
+        const attackerNpc = attackerEntity.getComponent(NPC);
         const defenderCombat = defenderEntity.getComponent(Combat);
         const defenderPlayer = defenderEntity.getComponent(Player);
+        const defenderNpc = defenderEntity.getComponent(NPC);
 
-        if (!attackerCombat || !attackerPlayer || !defenderCombat || !defenderPlayer) {
-            console.log('performAttack: Missing components');
+        if (!attackerCombat || !defenderCombat) {
+            console.log('performAttack: Missing combat components');
+            return;
+        }
+        
+        // Must have attacker identity (player or NPC)
+        if (!attackerPlayer && !attackerNpc) {
+            console.log('performAttack: Attacker is neither player nor NPC');
+            return;
+        }
+        
+        // Must have defender identity (player or NPC)
+        if (!defenderPlayer && !defenderNpc) {
+            console.log('performAttack: Defender is neither player nor NPC');
             return;
         }
 
-        console.log('performAttack:', attackerPlayer.username, '->', defenderPlayer.username);
+        const attackerName = attackerPlayer ? attackerPlayer.username : attackerNpc.name;
+        const defenderName = defenderPlayer ? defenderPlayer.username : defenderNpc.name;
+        console.log('performAttack:', attackerName, '->', defenderName);
 
         // Get equipment and effect bonuses
         const attackerEquip = attackerEntity.getComponent(Equipment);
@@ -119,27 +154,32 @@ export class CombatSystem {
             defenderCombat.hitpoints = Math.max(0, defenderCombat.hitpoints - damage);
             console.log('Hit! Damage:', damage, '(STR:', effectiveStrength, 'vs DEF:', effectiveDefense, ') Defender HP:', defenderCombat.hitpoints);
 
-            // Update database
-            this.statements.updatePlayerStats.run(
-                defenderCombat.hitpoints,
-                defenderCombat.strength,
-                defenderPlayer.userId
-            );
+            // Update database only for players
+            if (defenderPlayer) {
+                this.statements.updatePlayerStats.run(
+                    defenderCombat.hitpoints,
+                    defenderCombat.strength,
+                    defenderPlayer.userId
+                );
+            }
 
-            // Send hit notification to both players
-            this.io.to(attackerPlayer.socketId).emit('combatHit', {
-                attackerId: attackerPlayer.userId,
-                defenderId: defenderPlayer.userId,
+            // Build combat hit payload
+            const hitPayload = {
+                attackerId: attackerPlayer ? attackerPlayer.userId : `npc_${attackerEntity.id}`,
+                attackerName: attackerName,
+                defenderId: defenderPlayer ? defenderPlayer.userId : `npc_${defenderEntity.id}`,
+                defenderName: defenderName,
                 damage,
-                defenderHp: defenderCombat.hitpoints
-            });
+                defenderHp: defenderCombat.hitpoints,
+                isNpcAttacker: !!attackerNpc,
+                isNpcDefender: !!defenderNpc
+            };
 
-            this.io.to(defenderPlayer.socketId).emit('combatHit', {
-                attackerId: attackerPlayer.userId,
-                defenderId: defenderPlayer.userId,
-                damage,
-                defenderHp: defenderCombat.hitpoints
-            });
+            // Get room for broadcasting
+            const roomId = attackerPlayer?.roomId || attackerNpc?.roomId;
+            if (roomId) {
+                this.io.to(`room-${roomId}`).emit('combatHit', hitPayload);
+            }
 
             // If defender wasn't in combat, auto-retaliate
             if (!defenderCombat.inCombat) {
@@ -151,16 +191,21 @@ export class CombatSystem {
                 this.handleDeath(defenderEntity, attackerEntity);
             }
         } else {
-            // Miss - notify both players
+            // Miss - notify room
             console.log('Miss!');
-            this.io.to(attackerPlayer.socketId).emit('combatMiss', {
-                attackerId: attackerPlayer.userId,
-                defenderId: defenderPlayer.userId
-            });
-            this.io.to(defenderPlayer.socketId).emit('combatMiss', {
-                attackerId: attackerPlayer.userId,
-                defenderId: defenderPlayer.userId
-            });
+            const missPayload = {
+                attackerId: attackerPlayer ? attackerPlayer.userId : `npc_${attackerEntity.id}`,
+                attackerName: attackerName,
+                defenderId: defenderPlayer ? defenderPlayer.userId : `npc_${defenderEntity.id}`,
+                defenderName: defenderName,
+                isNpcAttacker: !!attackerNpc,
+                isNpcDefender: !!defenderNpc
+            };
+            
+            const roomId = attackerPlayer?.roomId || attackerNpc?.roomId;
+            if (roomId) {
+                this.io.to(`room-${roomId}`).emit('combatMiss', missPayload);
+            }
         }
     }
 
@@ -193,12 +238,14 @@ export class CombatSystem {
 
     handleDeath(entity, killerEntity = null) {
         const player = entity.getComponent(Player);
+        const npc = entity.getComponent(NPC);
         const combat = entity.getComponent(Combat);
         const transform = entity.getComponent(Transform);
 
-        if (!player || !combat || !transform) return;
+        if (!combat || !transform) return;
+        if (!player && !npc) return;
 
-        // Stop combat for the dead player
+        // Stop combat for the dead entity
         this.stopCombat(entity);
         
         // Stop combat for the killer too
@@ -206,6 +253,15 @@ export class CombatSystem {
             this.stopCombat(killerEntity);
         }
 
+        // Handle NPC death
+        if (npc) {
+            if (this.npcSystem) {
+                this.npcSystem.handleNPCDeath(entity, killerEntity);
+            }
+            return;
+        }
+
+        // Handle player death (existing logic)
         // Track deaths for the dead player
         this.statements.incrementDeaths.run(player.userId);
         

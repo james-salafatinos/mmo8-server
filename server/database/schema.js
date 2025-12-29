@@ -208,6 +208,48 @@ export function initializeDatabase(db) {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_effects_expires ON active_effects(expires_at)`);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_world_items_room ON world_items(room_id)`);
 
+    // NPC templates table - defines NPC types
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS npc_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            faction TEXT DEFAULT 'neutral' CHECK(faction IN ('friendly', 'neutral', 'hostile')),
+            level INTEGER DEFAULT 1,
+            hitpoints INTEGER DEFAULT 10,
+            max_hitpoints INTEGER DEFAULT 10,
+            strength INTEGER DEFAULT 1,
+            defense INTEGER DEFAULT 0,
+            behavior_type TEXT DEFAULT 'stationary' CHECK(behavior_type IN ('stationary', 'patrol', 'wander')),
+            aggressive INTEGER DEFAULT 0,
+            aggro_range REAL DEFAULT 5,
+            leash_range REAL DEFAULT 15,
+            wander_radius REAL DEFAULT 5,
+            respawn_time INTEGER DEFAULT 30000,
+            model_id TEXT DEFAULT 'npc_default',
+            color TEXT DEFAULT '#888888',
+            dialogue_json TEXT DEFAULT '[]',
+            loot_table_json TEXT DEFAULT '[]'
+        )
+    `);
+
+    // NPC spawns table - where NPCs spawn in rooms
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS npc_spawns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            template_id INTEGER NOT NULL,
+            room_id INTEGER NOT NULL,
+            x REAL DEFAULT 0,
+            y REAL DEFAULT 0.5,
+            z REAL DEFAULT 0,
+            patrol_path_json TEXT DEFAULT '[]',
+            FOREIGN KEY (template_id) REFERENCES npc_templates(id),
+            FOREIGN KEY (room_id) REFERENCES rooms(id)
+        )
+    `);
+
+    // Create NPC indexes
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_npc_spawns_room ON npc_spawns(room_id)`);
+
     // Migration: Add icon column to items if it doesn't exist
     try {
         const itemCols = db.prepare("PRAGMA table_info(items)").all();
@@ -234,6 +276,9 @@ export function initializeDatabase(db) {
 
     // Seed initial items if none exist
     seedItems(db);
+
+    // Seed initial NPCs if none exist
+    seedNPCs(db);
 
     console.log('Database schema initialized');
 }
@@ -279,6 +324,68 @@ function seedItems(db) {
         console.log('Seeded initial items');
     } catch (err) {
         console.error('Error seeding items:', err);
+    }
+}
+
+// Seed initial NPCs
+function seedNPCs(db) {
+    try {
+        const npcCount = db.prepare("SELECT COUNT(*) as count FROM npc_templates").get();
+        if (npcCount.count > 0) return;
+
+        const insertTemplate = db.prepare(`
+            INSERT INTO npc_templates (name, faction, level, hitpoints, max_hitpoints, strength, defense, 
+                behavior_type, aggressive, aggro_range, respawn_time, model_id, color, dialogue_json, loot_table_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        const insertSpawn = db.prepare(`
+            INSERT INTO npc_spawns (template_id, room_id, x, y, z, patrol_path_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `);
+
+        // Friendly NPCs
+        insertTemplate.run('Village Elder', 'friendly', 1, 50, 50, 1, 5, 'stationary', 0, 0, 15000, 
+            'npc_elder', '#44aa44', 
+            JSON.stringify([{ text: "Welcome, traveler! This village is peaceful." }, { text: "Beware the goblins in the forest!" }]),
+            '[]');
+
+        insertTemplate.run('Guard', 'friendly', 5, 30, 30, 5, 10, 'patrol', 0, 0, 10000,
+            'npc_guard', '#4444aa',
+            JSON.stringify([{ text: "Halt! State your business." }, { text: "The roads are dangerous at night." }]),
+            '[]');
+
+        // Neutral NPCs  
+        insertTemplate.run('Wandering Merchant', 'neutral', 1, 20, 20, 1, 2, 'wander', 0, 0, 60000,
+            'npc_merchant', '#aa8844',
+            JSON.stringify([{ text: "Care to trade?" }, { text: "I have rare wares from distant lands!" }]),
+            '[]');
+
+        // Hostile NPCs (mobs)
+        insertTemplate.run('Goblin', 'hostile', 2, 15, 15, 3, 1, 'wander', 1, 6, 8000,
+            'npc_goblin', '#44aa44',
+            JSON.stringify([{ text: "*growls*" }]),
+            JSON.stringify([{ itemId: 11, minQuantity: 1, maxQuantity: 10, dropRate: 0.8 }, { itemId: 7, minQuantity: 1, maxQuantity: 1, dropRate: 0.3 }]));
+
+        insertTemplate.run('Skeleton', 'hostile', 3, 20, 20, 4, 2, 'patrol', 1, 8, 10000,
+            'npc_skeleton', '#cccccc',
+            JSON.stringify([{ text: "*rattles bones*" }]),
+            JSON.stringify([{ itemId: 11, minQuantity: 5, maxQuantity: 20, dropRate: 0.9 }, { itemId: 1, minQuantity: 1, maxQuantity: 1, dropRate: 0.1 }]));
+
+        insertTemplate.run('Wolf', 'hostile', 2, 12, 12, 4, 0, 'wander', 1, 10, 6000,
+            'npc_wolf', '#666666',
+            JSON.stringify([{ text: "*growls menacingly*" }]),
+            JSON.stringify([{ itemId: 8, minQuantity: 1, maxQuantity: 2, dropRate: 0.5 }]));
+
+        // Spawn some NPCs in room 1
+        insertSpawn.run(1, 1, 5, 0.5, 5, '[]'); // Village Elder
+        insertSpawn.run(2, 1, -3, 0.5, 8, JSON.stringify([{x:-3,y:0.5,z:8},{x:3,y:0.5,z:8},{x:3,y:0.5,z:-8},{x:-3,y:0.5,z:-8}])); // Guard patrol
+        insertSpawn.run(4, 1, 10, 0.5, -10, '[]'); // Goblin
+        insertSpawn.run(4, 1, 12, 0.5, -8, '[]'); // Another Goblin
+
+        console.log('Seeded initial NPCs');
+    } catch (err) {
+        console.error('Error seeding NPCs:', err);
     }
 }
 
@@ -460,6 +567,50 @@ export function createStatements(db) {
 
         // Notes operations (notepad persistence)
         getNotes: db.prepare(`SELECT notes FROM player_state WHERE user_id = ?`),
-        saveNotes: db.prepare(`UPDATE player_state SET notes = ? WHERE user_id = ?`)
+        saveNotes: db.prepare(`UPDATE player_state SET notes = ? WHERE user_id = ?`),
+
+        // NPC template operations
+        getAllNPCTemplates: db.prepare(`SELECT * FROM npc_templates ORDER BY id`),
+        getNPCTemplateById: db.prepare(`SELECT * FROM npc_templates WHERE id = ?`),
+        createNPCTemplate: db.prepare(`
+            INSERT INTO npc_templates (name, faction, level, hitpoints, max_hitpoints, strength, defense,
+                behavior_type, aggressive, aggro_range, leash_range, wander_radius, respawn_time, 
+                model_id, color, dialogue_json, loot_table_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `),
+        updateNPCTemplate: db.prepare(`
+            UPDATE npc_templates SET name = ?, faction = ?, level = ?, hitpoints = ?, max_hitpoints = ?,
+                strength = ?, defense = ?, behavior_type = ?, aggressive = ?, aggro_range = ?,
+                leash_range = ?, wander_radius = ?, respawn_time = ?, model_id = ?, color = ?,
+                dialogue_json = ?, loot_table_json = ?
+            WHERE id = ?
+        `),
+        deleteNPCTemplate: db.prepare(`DELETE FROM npc_templates WHERE id = ?`),
+
+        // NPC spawn operations
+        getNPCSpawnsByRoom: db.prepare(`
+            SELECT s.*, t.name, t.faction, t.level, t.hitpoints, t.max_hitpoints, t.strength, t.defense,
+                t.behavior_type, t.aggressive, t.aggro_range, t.leash_range, t.wander_radius, 
+                t.respawn_time, t.model_id, t.color, t.dialogue_json, t.loot_table_json
+            FROM npc_spawns s
+            JOIN npc_templates t ON s.template_id = t.id
+            WHERE s.room_id = ?
+        `),
+        getAllNPCSpawns: db.prepare(`
+            SELECT s.*, t.name, t.faction, t.level, t.hitpoints, t.max_hitpoints, t.strength, t.defense,
+                t.behavior_type, t.aggressive, t.aggro_range, t.leash_range, t.wander_radius,
+                t.respawn_time, t.model_id, t.color, t.dialogue_json, t.loot_table_json
+            FROM npc_spawns s
+            JOIN npc_templates t ON s.template_id = t.id
+        `),
+        createNPCSpawn: db.prepare(`
+            INSERT INTO npc_spawns (template_id, room_id, x, y, z, patrol_path_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `),
+        updateNPCSpawn: db.prepare(`
+            UPDATE npc_spawns SET template_id = ?, room_id = ?, x = ?, y = ?, z = ?, patrol_path_json = ?
+            WHERE id = ?
+        `),
+        deleteNPCSpawn: db.prepare(`DELETE FROM npc_spawns WHERE id = ?`)
     };
 }

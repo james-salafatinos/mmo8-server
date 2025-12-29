@@ -1,6 +1,7 @@
 // Main Game class - Three.js scene and game loop
 import * as THREE from 'three';
 import { PlayerManager } from './PlayerManager.js';
+import { NPCManager } from './NPCManager.js';
 import { InputManager } from './InputManager.js';
 import { SpellProjectileManager } from './SpellProjectileManager.js';
 import { InventoryUI } from '../ui/InventoryUI.js';
@@ -17,6 +18,7 @@ export class Game {
         this.camera = null;
         this.renderer = null;
         this.playerManager = null;
+        this.npcManager = null;
         this.inputManager = null;
         this.ground = null;
         this.clock = new THREE.Clock();
@@ -44,6 +46,7 @@ export class Game {
 
         // Initialize managers
         this.playerManager = new PlayerManager(this.scene, this.userData);
+        this.npcManager = new NPCManager(this.scene);
         this.inputManager = new InputManager(this, this.networkManager);
 
         // Initialize UI components
@@ -172,6 +175,10 @@ export class Game {
         // Handle game state updates
         this.networkManager.onGameState((data) => {
             this.playerManager.updatePlayers(data.players);
+            // Update NPCs if included in game state
+            if (data.npcs && this.npcManager) {
+                this.npcManager.updateNPCs(data.npcs);
+            }
         });
 
         // Handle full state (on login)
@@ -188,6 +195,33 @@ export class Game {
         this.networkManager.onPlayerLeft((data) => {
             console.log(`${data.username} left the game`);
             this.playerManager.removePlayer(data.userId);
+        });
+
+        // Handle NPCs in room (initial load)
+        this.networkManager.socket.on('npcsInRoom', (data) => {
+            console.log('NPCs received:', data.npcs?.length || 0);
+            if (data.npcs) {
+                this.npcManager.initNPCs(data.npcs);
+            }
+        });
+
+        // Handle NPC state updates
+        this.networkManager.socket.on('npcUpdate', (data) => {
+            if (data.npcs) {
+                this.npcManager.updateNPCs(data.npcs);
+            }
+        });
+
+        // Handle NPC death
+        this.networkManager.socket.on('npcDied', (data) => {
+            console.log(`NPC ${data.name} died at (${data.x}, ${data.z})`);
+            this.npcManager.removeNPC(data.entityId);
+        });
+
+        // Handle NPC respawn
+        this.networkManager.socket.on('npcRespawned', (data) => {
+            console.log(`NPC ${data.name} respawned`);
+            this.npcManager.addOrUpdateNPC(data);
         });
 
         // Handle chat messages - show bubble above player (but NOT for whispers)
@@ -288,6 +322,11 @@ export class Game {
             if (localPlayer) {
                 this.updateCamera(localPlayer.position);
             }
+        }
+
+        // Update NPC manager
+        if (this.npcManager) {
+            this.npcManager.update(deltaTime);
         }
 
         // Update world item animations

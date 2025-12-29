@@ -1,6 +1,7 @@
 // EditorUI - handles editor interface elements
 import { EditorInput } from './EditorInput.js';
 import { ItemsEditor } from './ItemsEditor.js';
+import { NPCEditor } from './NPCEditor.js';
 
 export class EditorUI {
     constructor(editorManager, networkManager) {
@@ -9,6 +10,7 @@ export class EditorUI {
         this.isVisible = false;
         this.editorInput = null;
         this.itemsEditor = null;
+        this.npcEditor = null;
         this.adminToken = null;
         
         this.createUI();
@@ -123,6 +125,9 @@ export class EditorUI {
                 <button id="tool-items" class="editor-btn" title="Items Editor">
                     📦 Items
                 </button>
+                <button id="tool-npcs" class="editor-btn" title="NPC Editor">
+                    👹 NPCs
+                </button>
                 <button id="tool-publish" class="editor-btn primary" title="Publish Room">
                     📤 Publish
                 </button>
@@ -204,6 +209,12 @@ export class EditorUI {
                 } else {
                     this.itemsEditor.updateAdminToken(this.adminToken);
                 }
+                if (!this.npcEditor) {
+                    const { NPCEditor } = await import('./NPCEditor.js');
+                    this.npcEditor = new NPCEditor(this.networkManager, this.adminToken);
+                } else {
+                    this.npcEditor.updateAdminToken(this.adminToken);
+                }
                 this.loadEditorRoom();
             } else {
                 // No existing session - show login modal
@@ -272,6 +283,7 @@ export class EditorUI {
         });
         
         document.getElementById('tool-items')?.addEventListener('click', () => this.toggleItemsEditor());
+        document.getElementById('tool-npcs')?.addEventListener('click', () => this.toggleNPCEditor());
         document.getElementById('tool-publish')?.addEventListener('click', () => this.handlePublish());
         document.getElementById('tool-revert')?.addEventListener('click', () => this.handleRevert());
         document.getElementById('tool-exit-editor')?.addEventListener('click', () => this.exitEditorMode());
@@ -317,6 +329,13 @@ export class EditorUI {
                 this.itemsEditor.updateAdminToken(this.adminToken);
             }
             
+            // Initialize NPC editor with admin token
+            if (!this.npcEditor) {
+                this.npcEditor = new NPCEditor(this.networkManager, this.adminToken);
+            } else {
+                this.npcEditor.updateAdminToken(this.adminToken);
+            }
+            
             // Load current room for editing
             const roomDropdown = document.getElementById('room-dropdown');
             if (roomDropdown.value) {
@@ -331,6 +350,12 @@ export class EditorUI {
     toggleItemsEditor() {
         if (this.itemsEditor) {
             this.itemsEditor.toggle();
+        }
+    }
+    
+    toggleNPCEditor() {
+        if (this.npcEditor) {
+            this.npcEditor.toggle();
         }
     }
 

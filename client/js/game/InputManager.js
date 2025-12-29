@@ -418,8 +418,9 @@ export class InputManager {
         if (this.castMode && this.selectedSpell) {
             const spellType = this.selectedSpell.type;
             
-            // Damage spells (fireball, icebolt) - target other players
+            // Damage spells (fireball, icebolt) - target players or NPCs
             if (spellType === 'damage') {
+                // Check for player targets first
                 const playerMeshes = this.game.playerManager.getPlayerMeshes();
                 const playerIntersects = this.raycaster.intersectObjects(playerMeshes, true);
                 
@@ -430,6 +431,21 @@ export class InputManager {
                         return;
                     }
                 }
+                
+                // Check for NPC targets
+                if (this.game.npcManager) {
+                    const npcMeshes = this.game.npcManager.getNPCMeshes();
+                    const npcIntersects = this.raycaster.intersectObjects(npcMeshes, true);
+                    
+                    if (npcIntersects.length > 0) {
+                        const npcData = this.game.npcManager.getNPCByMesh(npcIntersects[0].object);
+                        if (npcData) {
+                            this.castDamageSpellOnNPC(npcData.entityId, npcIntersects[0].point);
+                            return;
+                        }
+                    }
+                }
+                
                 // Clicked ground - cancel cast mode
                 this.cancelSpellCast();
                 return;
@@ -512,6 +528,7 @@ export class InputManager {
         const items = [];
         let hitGround = false;
         let hitPlayer = null;
+        let hitNPC = null;
         let hitInteractable = null;
         let hitWorldItem = null;
         let groundPoint = null;
@@ -519,11 +536,28 @@ export class InputManager {
         for (const hit of intersects) {
             const obj = hit.object;
             
-            // Check if it's a world item (dropped by players) - traverse up for GLB models
-            if (!hitWorldItem) {
+            // Check if it's an NPC (cylinders with NPC data)
+            if (!hitNPC && this.game.npcManager) {
                 let current = obj;
                 while (current) {
-                    if (current.userData?.entityId) {
+                    if (current.userData?.isNPC) {
+                        const npcData = this.game.npcManager.getNPCByMesh(current);
+                        if (npcData) {
+                            hitNPC = npcData;
+                            break;
+                        }
+                    }
+                    current = current.parent;
+                }
+            }
+            
+            // Check if it's a world item (dropped by players) - traverse up for GLB models
+            // But skip if we already detected an NPC (NPCs have entityId too)
+            if (!hitWorldItem && !hitNPC) {
+                let current = obj;
+                while (current) {
+                    // Only match world items, not NPCs (NPCs have isNPC flag)
+                    if (current.userData?.entityId && !current.userData?.isNPC) {
                         hitWorldItem = {
                             entityId: current.userData.entityId,
                             name: current.userData.itemName || 'Item'
@@ -627,6 +661,37 @@ export class InputManager {
                 type: 'player',
                 action: () => {
                     this.startFollowing(hitPlayer.userId);
+                    this.hideContextMenu();
+                }
+            });
+        }
+        
+        // Add NPC-specific options
+        if (hitNPC) {
+            const factionIcon = hitNPC.faction === 'hostile' ? '👹' : hitNPC.faction === 'friendly' ? '🧙' : '👤';
+            items.push({
+                label: `${factionIcon} ${hitNPC.name} (Lv.${hitNPC.level})`,
+                type: 'npc',
+                action: () => console.log('Selected NPC:', hitNPC.name)
+            });
+            
+            // Talk option (available for all NPCs)
+            items.push({
+                label: '💬 Talk',
+                type: 'npc',
+                action: () => {
+                    this.talkToNPC(hitNPC.entityId, hitNPC.name);
+                    this.hideContextMenu();
+                }
+            });
+            
+            // Attack option (primarily for hostile, but allow attacking any NPC)
+            items.push({
+                label: '⚔️ Attack',
+                type: 'npc',
+                action: () => {
+                    console.log('Attacking NPC:', hitNPC.entityId, hitNPC.name);
+                    this.networkManager.socket.emit('attackNPC', { npcEntityId: hitNPC.entityId });
                     this.hideContextMenu();
                 }
             });
@@ -901,6 +966,62 @@ export class InputManager {
         this.executeBankOpen({ position: bankPosition });
     }
     
+    // Talk to an NPC - request dialogue from server
+    talkToNPC(npcEntityId, npcName) {
+        console.log('Talking to NPC:', npcEntityId, npcName);
+        
+        this.networkManager.socket.emit('talkToNPC', { npcEntityId }, (response) => {
+            if (response.success && response.dialogue) {
+                this.showNPCDialogue(npcName, response.dialogue.text);
+            } else {
+                this.showNPCDialogue(npcName, "...");
+            }
+        });
+    }
+    
+    // Show NPC dialogue bubble/popup
+    showNPCDialogue(npcName, text) {
+        // Create or get dialogue container
+        let dialogueBox = document.getElementById('npc-dialogue-box');
+        if (!dialogueBox) {
+            dialogueBox = document.createElement('div');
+            dialogueBox.id = 'npc-dialogue-box';
+            dialogueBox.style.cssText = `
+                position: fixed;
+                bottom: 20%;
+                left: 50%;
+                transform: translateX(-50%);
+                background: rgba(0, 0, 0, 0.9);
+                border: 2px solid #aa8844;
+                border-radius: 10px;
+                padding: 20px;
+                color: white;
+                font-family: Arial, sans-serif;
+                max-width: 400px;
+                min-width: 250px;
+                z-index: 1000;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            `;
+            document.body.appendChild(dialogueBox);
+        }
+        
+        dialogueBox.innerHTML = `
+            <div style="color: #ffcc44; font-weight: bold; margin-bottom: 10px; font-size: 16px;">${npcName}</div>
+            <div style="line-height: 1.5;">${text}</div>
+            <button onclick="this.parentElement.style.display='none'" style="
+                margin-top: 15px;
+                padding: 8px 20px;
+                background: #aa8844;
+                border: none;
+                border-radius: 5px;
+                color: white;
+                cursor: pointer;
+                font-size: 14px;
+            ">Close</button>
+        `;
+        dialogueBox.style.display = 'block';
+    }
+    
     // Start following a player
     startFollowing(targetUserId) {
         this.stopFollowing(); // Clear any existing follow
@@ -1145,6 +1266,37 @@ export class InputManager {
         this.finishSpellCast();
     }
     
+    // Cast damage spell on NPC target
+    castDamageSpellOnNPC(npcEntityId, hitPoint) {
+        if (!this.castMode || !this.selectedSpell) return;
+        
+        const spell = this.selectedSpell;
+        const localPlayer = this.game.playerManager.getLocalPlayer();
+        const npc = this.game.npcManager.npcs.get(npcEntityId);
+        
+        if (!localPlayer || !npc) {
+            this.cancelSpellCast();
+            return;
+        }
+        
+        // Create projectile from caster to NPC
+        const startPos = localPlayer.position.clone();
+        startPos.y += 0.5;
+        
+        // Launch projectile toward NPC position (not tracking since NPCs move differently)
+        this.game.spellProjectileManager.launchProjectile(startPos, npc.mesh.position.clone(), spell, () => {});
+        
+        // Send to server with NPC target
+        this.networkManager.socket.emit('castSpellOnNPC', {
+            spellId: spell.id,
+            npcEntityId: npcEntityId,
+            type: 'damage'
+        });
+        
+        this.hideSpellTargetHighlight();
+        this.finishSpellCast();
+    }
+    
     // Cast heal spell on target (self or other player)
     castHealSpell(targetUserId) {
         if (!this.castMode || !this.selectedSpell) return;
@@ -1176,7 +1328,7 @@ export class InputManager {
     
     // Cast teleport spell to location
     castTeleportSpell(x, z) {
-        console.log('teleporting to', x, z);
+ 
         if (!this.castMode || !this.selectedSpell) return;
         
         const spell = this.selectedSpell;

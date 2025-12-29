@@ -280,3 +280,81 @@ export class WorldItem {
         };
     }
 }
+
+// NPC component - NPC-specific data
+export class NPC {
+    constructor(templateId, name, faction = 'neutral') {
+        this.templateId = templateId;
+        this.name = name;
+        this.faction = faction; // 'friendly', 'neutral', 'hostile'
+        this.level = 1;
+        this.dialogueId = null; // Reference to dialogue data
+        this.roomId = null;
+        this.isDead = false;
+        this.deathTime = null;
+        this.respawnTime = 30000; // 30 seconds default respawn
+    }
+
+    serialize() {
+        return {
+            templateId: this.templateId,
+            name: this.name,
+            faction: this.faction,
+            level: this.level,
+            dialogueId: this.dialogueId,
+            roomId: this.roomId,
+            isDead: this.isDead
+        };
+    }
+}
+
+// AIBehavior component - controls NPC AI
+export class AIBehavior {
+    constructor(behaviorType = 'stationary') {
+        this.behaviorType = behaviorType; // 'stationary', 'patrol', 'wander'
+        this.aggressive = false;
+        this.aggroRange = 5; // Distance to detect and attack players
+        this.leashRange = 15; // Distance before NPC returns to spawn
+        this.spawnPoint = { x: 0, y: 0.5, z: 0 };
+        this.patrolPath = []; // Array of {x, y, z} waypoints
+        this.currentPatrolIndex = 0;
+        this.wanderRadius = 5;
+        this.lastWanderTime = 0;
+        this.wanderCooldown = 3000; // Time between wander moves
+        this.currentTargetId = null; // Entity ID of current aggro target
+    }
+
+    serialize() {
+        return {
+            behaviorType: this.behaviorType,
+            aggressive: this.aggressive,
+            aggroRange: this.aggroRange,
+            spawnPoint: this.spawnPoint
+        };
+    }
+}
+
+// LootTable component - defines drops when NPC dies
+export class LootTable {
+    constructor(drops = []) {
+        // Array of { itemId, minQuantity, maxQuantity, dropRate (0-1) }
+        this.drops = drops;
+    }
+
+    rollDrops() {
+        const results = [];
+        for (const drop of this.drops) {
+            if (Math.random() <= drop.dropRate) {
+                const quantity = Math.floor(
+                    Math.random() * (drop.maxQuantity - drop.minQuantity + 1)
+                ) + drop.minQuantity;
+                results.push({ itemId: drop.itemId, quantity });
+            }
+        }
+        return results;
+    }
+
+    serialize() {
+        return { drops: this.drops };
+    }
+}

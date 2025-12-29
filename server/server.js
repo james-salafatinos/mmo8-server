@@ -21,6 +21,7 @@ import { EquipmentSystem } from './ecs/systems/EquipmentSystem.js';
 import { ConsumableSystem } from './ecs/systems/ConsumableSystem.js';
 import { WorldItemSystem } from './ecs/systems/WorldItemSystem.js';
 import { BankSystem } from './ecs/systems/BankSystem.js';
+import { NPCSystem } from './ecs/systems/NPCSystem.js';
 
 // Manager imports
 import { initializeDatabase, createStatements } from './database/schema.js';
@@ -65,6 +66,7 @@ const equipmentSystem = new EquipmentSystem(world, inventorySystem, io);
 const consumableSystem = new ConsumableSystem(world, inventorySystem, equipmentSystem, statements, io);
 const worldItemSystem = new WorldItemSystem(world, inventorySystem, roomManager, statements, io);
 const bankSystem = new BankSystem(world, inventorySystem, statements, io);
+const npcSystem = new NPCSystem(world, statements, io, roomManager);
 
 // Load item definitions into cache
 inventorySystem.loadItemCache();
@@ -76,7 +78,13 @@ worldItemSystem.loadWorldItems();
 persistenceSystem.inventorySystem = inventorySystem;
 persistenceSystem.equipmentSystem = equipmentSystem;
 
+// Link systems for NPC combat and loot
+combatSystem.npcSystem = npcSystem;
+npcSystem.combatSystem = combatSystem;
+npcSystem.worldItemSystem = worldItemSystem;
+
 world.addSystem(new MovementSystem());
+world.addSystem(npcSystem);
 world.addSystem(combatSystem);
 world.addSystem(equipmentSystem);
 world.addSystem(consumableSystem);
@@ -191,6 +199,10 @@ io.on('connection', (socket) => {
             // Send world items in this room
             const worldItems = worldItemSystem.getWorldItemsInRoom(savedRoomId);
             socket.emit('worldItems', { items: worldItems });
+            
+            // Send NPCs in this room
+            const npcs = npcSystem.getNPCsInRoom(savedRoomId);
+            socket.emit('npcsInRoom', { npcs });
 
             // Notify only players in same room
             roomManager.broadcastToRoom(savedRoomId, 'playerJoined', {
@@ -263,6 +275,10 @@ io.on('connection', (socket) => {
             // Send world items in this room
             const worldItems = worldItemSystem.getWorldItemsInRoom(savedRoomId);
             socket.emit('worldItems', { items: worldItems });
+            
+            // Send NPCs in this room
+            const npcs = npcSystem.getNPCsInRoom(savedRoomId);
+            socket.emit('npcsInRoom', { npcs });
 
             // Notify only players in same room
             roomManager.broadcastToRoom(savedRoomId, 'playerJoined', {
@@ -387,6 +403,52 @@ io.on('connection', (socket) => {
         console.log('Attack: Starting combat between', userId, 'and target entity', targetEntityId);
         // Start combat
         combatSystem.startCombat(entity, targetEntityId);
+    });
+
+    // ============ NPC HANDLERS ============
+
+    // Get NPCs in current room
+    socket.on('getNPCs', (callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const roomId = roomManager.getPlayerRoom(socket.id);
+        if (!roomId) return callback({ success: false, error: 'Not in a room' });
+        
+        const npcs = npcSystem.getNPCsInRoom(roomId);
+        callback({ success: true, npcs });
+    });
+
+    // Attack an NPC
+    socket.on('attackNPC', (data) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return;
+        
+        const entityId = playerEntities.get(userId);
+        const entity = world.getEntity(entityId);
+        if (!entity) return;
+        
+        const { npcEntityId } = data;
+        const npcEntity = world.getEntity(npcEntityId);
+        if (!npcEntity) return;
+        
+        console.log('attackNPC: Player', userId, 'attacking NPC entity', npcEntityId);
+        combatSystem.startCombat(entity, npcEntityId);
+    });
+
+    // Talk to an NPC
+    socket.on('talkToNPC', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const { npcEntityId } = data;
+        const dialogue = npcSystem.getNPCDialogue(npcEntityId);
+        
+        if (!dialogue) {
+            return callback({ success: false, error: 'NPC has nothing to say' });
+        }
+        
+        callback({ success: true, dialogue });
     });
 
     // ============ INVENTORY/EQUIPMENT/BANK HANDLERS ============
@@ -717,6 +779,80 @@ io.on('connection', (socket) => {
         respond({ success: true });
     });
 
+    // Handle spell casting on NPCs
+    socket.on('castSpellOnNPC', (data, callback) => {
+        const respond = typeof callback === 'function' ? callback : () => {};
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return respond({ success: false, error: 'Not logged in' });
+
+        const { spellId, npcEntityId, type } = data;
+        const entityId = playerEntities.get(userId);
+        const casterEntity = world.getEntity(entityId);
+        if (!casterEntity) return respond({ success: false, error: 'Caster not found' });
+
+        const casterTransform = casterEntity.getComponent(Transform);
+        const casterPlayer = casterEntity.getComponent(Player);
+        const roomId = casterPlayer?.roomId;
+
+        // Spell definitions
+        const spells = {
+            fireball: { type: 'damage', value: 5 },
+            icebolt: { type: 'damage', value: 4 }
+        };
+        const spell = spells[spellId];
+        if (!spell) return respond({ success: false, error: 'Unknown spell' });
+
+        // Get NPC entity
+        const npcEntity = world.getEntity(npcEntityId);
+        if (!npcEntity) return respond({ success: false, error: 'NPC not found' });
+
+        const npc = npcEntity.getComponent(require('./ecs/components/index.js').NPC);
+        const npcCombat = npcEntity.getComponent(Combat);
+        const npcTransform = npcEntity.getComponent(Transform);
+
+        if (!npc || !npcCombat || npc.isDead) {
+            return respond({ success: false, error: 'Invalid NPC target' });
+        }
+
+        // Apply damage
+        const damage = spell.value;
+        npcCombat.hitpoints = Math.max(0, npcCombat.hitpoints - damage);
+
+        // Broadcast spell hit to room
+        io.to(`room-${roomId}`).emit('spellHit', {
+            casterId: userId,
+            targetId: `npc_${npcEntityId}`,
+            spellId: spellId,
+            damage: damage,
+            targetHp: npcCombat.hitpoints,
+            isNpcTarget: true
+        });
+
+        // NPC retaliates
+        if (!npcCombat.inCombat) {
+            combatSystem.startCombat(npcEntity, entityId);
+        }
+
+        // Check for NPC death
+        if (npcCombat.hitpoints <= 0) {
+            npcSystem.handleNPCDeath(npcEntity, casterEntity);
+        }
+
+        // Broadcast spell visual
+        io.to(`room-${roomId}`).emit('spellCast', {
+            casterId: userId,
+            targetId: `npc_${npcEntityId}`,
+            spellId: spellId,
+            casterX: casterTransform.x,
+            casterY: casterTransform.y,
+            casterZ: casterTransform.z,
+            targetX: npcTransform.x,
+            targetZ: npcTransform.z
+        });
+
+        respond({ success: true });
+    });
+
     // Handle disconnect
     socket.on('disconnect', () => {
         console.log(`Client disconnected: ${socket.id}`);
@@ -1024,6 +1160,129 @@ io.on('connection', (socket) => {
                 itemId
             );
             inventorySystem.loadItemCache(); // Refresh cache
+            callback({ success: true });
+        } catch (err) {
+            callback({ success: false, error: err.message });
+        }
+    });
+
+    // =====================
+    // NPC EDITOR MANAGEMENT
+    // =====================
+
+    // Get items for loot table editor
+    socket.on('getItems', (data, callback) => {
+        const { adminToken } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            return callback({ success: false, error: validation.error });
+        }
+        const items = statements.getAllItems.all();
+        callback({ success: true, items });
+    });
+
+    // Get all NPC templates
+    socket.on('getNPCTemplates', (data, callback) => {
+        const { adminToken } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            return callback({ success: false, error: validation.error });
+        }
+        const templates = statements.getAllNPCTemplates.all();
+        callback({ success: true, templates });
+    });
+
+    // Get NPC spawns for a room
+    socket.on('getNPCSpawns', (data, callback) => {
+        const { adminToken, roomId } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            return callback({ success: false, error: validation.error });
+        }
+        const spawns = statements.getNPCSpawnsByRoom.all(roomId || 1);
+        callback({ success: true, spawns });
+    });
+
+    // Save NPC template (create or update)
+    socket.on('saveNPCTemplate', (data, callback) => {
+        const { adminToken, templateId } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            return callback({ success: false, error: validation.error });
+        }
+        try {
+            if (templateId) {
+                statements.updateNPCTemplate.run(
+                    data.name, data.faction, data.level, data.hitpoints, data.hitpoints,
+                    data.strength, data.defense, data.behavior_type, data.aggressive ? 1 : 0,
+                    data.aggro_range, 15, 5, data.respawn_time, data.model_id, data.color,
+                    data.dialogue_json, data.loot_table_json, templateId
+                );
+            } else {
+                statements.createNPCTemplate.run(
+                    data.name, data.faction, data.level, data.hitpoints, data.hitpoints,
+                    data.strength, data.defense, data.behavior_type, data.aggressive ? 1 : 0,
+                    data.aggro_range, 15, 5, data.respawn_time, data.model_id, data.color,
+                    data.dialogue_json, data.loot_table_json
+                );
+            }
+            callback({ success: true });
+        } catch (err) {
+            callback({ success: false, error: err.message });
+        }
+    });
+
+    // Delete NPC template
+    socket.on('deleteNPCTemplate', (data, callback) => {
+        const { adminToken, templateId } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            return callback({ success: false, error: validation.error });
+        }
+        try {
+            statements.deleteNPCTemplate.run(templateId);
+            callback({ success: true });
+        } catch (err) {
+            callback({ success: false, error: err.message });
+        }
+    });
+
+    // Save NPC spawn (create or update)
+    socket.on('saveNPCSpawn', (data, callback) => {
+        const { adminToken, spawnId } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            return callback({ success: false, error: validation.error });
+        }
+        try {
+            if (spawnId) {
+                statements.updateNPCSpawn.run(
+                    data.template_id, data.room_id, data.x, data.y, data.z,
+                    data.patrol_path_json, spawnId
+                );
+            } else {
+                statements.createNPCSpawn.run(
+                    data.template_id, data.room_id, data.x, data.y, data.z,
+                    data.patrol_path_json
+                );
+            }
+            // Reload NPCs in the room
+            npcSystem.loadNPCsForRoom(data.room_id);
+            callback({ success: true });
+        } catch (err) {
+            callback({ success: false, error: err.message });
+        }
+    });
+
+    // Delete NPC spawn
+    socket.on('deleteNPCSpawn', (data, callback) => {
+        const { adminToken, spawnId } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            return callback({ success: false, error: validation.error });
+        }
+        try {
+            statements.deleteNPCSpawn.run(spawnId);
             callback({ success: true });
         } catch (err) {
             callback({ success: false, error: err.message });
