@@ -299,7 +299,7 @@ body.editor-mode #scene-container {
 #inspector-panel {
     position: fixed;
     top: 50px;
-    right: 350px;
+    right: 50px;
     bottom: 0;
     width: 280px;
     flex-direction: column;

@@ -210,8 +210,17 @@ export class RoomManager {
         // Leave current room if any
         this.leaveRoom(socketId);
         
-        // Join new room
+        // Join new room in memory
         this.playerRooms.set(socketId, roomId);
+        
+        // Join Socket.IO room for broadcasting
+        const socket = this.io.sockets.sockets.get(socketId);
+        if (socket) {
+            socket.join(`room-${roomId}`);
+            console.log(`Socket ${socketId} joined Socket.IO room: room-${roomId}`);
+        } else {
+            console.warn(`Socket ${socketId} not found when joining room ${roomId}`);
+        }
         
         // Get spawn point
         const spawnPoint = room.spawnPoints[0] || { x: 0, y: 0.5, z: 0 };
@@ -228,6 +237,13 @@ export class RoomManager {
     leaveRoom(socketId) {
         const roomId = this.playerRooms.get(socketId);
         if (roomId) {
+            // Leave Socket.IO room
+            const socket = this.io.sockets.sockets.get(socketId);
+            if (socket) {
+                socket.leave(`room-${roomId}`);
+                console.log(`Socket ${socketId} left Socket.IO room: room-${roomId}`);
+            }
+            
             this.playerRooms.delete(socketId);
         }
         return roomId;

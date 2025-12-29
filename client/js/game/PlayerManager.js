@@ -380,4 +380,29 @@ export class PlayerManager {
 
         return sprite;
     }
+    
+    // Get all player meshes for raycasting (spell targeting)
+    getPlayerMeshes() {
+        const meshes = [];
+        for (const [userId, player] of this.players) {
+            if (player.mesh) {
+                player.mesh.userData.userId = userId;
+                meshes.push(player.mesh);
+            }
+        }
+        return meshes;
+    }
+    
+    // Get userId from a mesh that was hit by raycast
+    getUserIdFromMesh(mesh) {
+        // Check the mesh itself
+        if (mesh.userData && mesh.userData.userId) {
+            return mesh.userData.userId;
+        }
+        // Check parent (in case we hit a child object)
+        if (mesh.parent && mesh.parent.userData && mesh.parent.userData.userId) {
+            return mesh.parent.userData.userId;
+        }
+        return null;
+    }
 }

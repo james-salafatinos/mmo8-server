@@ -545,6 +545,178 @@ io.on('connection', (socket) => {
 
     // ============ END INVENTORY/EQUIPMENT/BANK HANDLERS ============
 
+    // ============ NOTEPAD HANDLERS ============
+    socket.on('getNotes', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        const result = statements.getNotes.get(userId);
+        callback({ success: true, notes: result?.notes || '' });
+    });
+
+    socket.on('saveNotes', (data, callback) => {
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return callback({ success: false, error: 'Not logged in' });
+        
+        try {
+            statements.saveNotes.run(data.notes || '', userId);
+            callback({ success: true });
+        } catch (err) {
+            callback({ success: false, error: 'Failed to save notes' });
+        }
+    });
+
+    // ============ SPELL CASTING HANDLERS ============
+    socket.on('castSpell', (data, callback) => {
+       
+        // Ensure callback is a function (may not be provided)
+        const respond = typeof callback === 'function' ? callback : () => {};
+        
+        const userId = authManager.getUserId(socket.id);
+        if (!userId) return respond({ success: false, error: 'Not logged in' });
+        
+        const entity = world.getEntity(playerEntities.get(userId));
+        if (!entity) return respond({ success: false, error: 'No entity' });
+        
+        const { spellId, targetUserId, targetX, targetZ, type } = data;
+        const casterPlayer = entity.getComponent(Player);
+        const casterTransform = entity.getComponent(Transform);
+        const casterCombat = entity.getComponent(Combat);
+        
+        // Spell definitions
+        const spells = {
+            fireball: { type: 'damage', value: 5, color: 0xff4400 },
+            icebolt: { type: 'damage', value: 3, color: 0x00ccff },
+            heal: { type: 'heal', value: 5, color: 0x44ff44 },
+            teleport: { type: 'teleport', value: 0, color: 0xaa44ff }
+        };
+        
+        const spell = spells[spellId];
+        if (!spell) return respond({ success: false, error: 'Unknown spell' });
+        
+        const roomId = roomManager.getPlayerRoom(socket.id);
+        
+        // Handle damage spells (fireball, icebolt)
+        if (spell.type === 'damage' && targetUserId) {
+            let targetEntityId = playerEntities.get(targetUserId);
+            if (!targetEntityId) targetEntityId = playerEntities.get(Number(targetUserId));
+            
+            const targetEntity = world.getEntity(targetEntityId);
+            if (!targetEntity) return respond({ success: false, error: 'Target not found' });
+            
+            const targetCombat = targetEntity.getComponent(Combat);
+            const targetPlayer = targetEntity.getComponent(Player);
+            
+            if (!targetCombat || !targetPlayer) {
+                return respond({ success: false, error: 'Invalid target' });
+            }
+            
+            // Apply spell damage
+            const damage = spell.value;
+            targetCombat.hitpoints = Math.max(0, targetCombat.hitpoints - damage);
+            
+            // Update database
+            statements.updatePlayerStats.run(targetCombat.hitpoints, targetCombat.strength, targetPlayer.userId);
+            
+            // Notify all players of spell hit
+            if (roomId) {
+                io.to(`room-${roomId}`).emit('spellHit', {
+                    casterId: userId,
+                    targetId: targetUserId,
+                    spellId: spellId,
+                    damage: damage,
+                    targetHp: targetCombat.hitpoints
+                });
+            }
+            
+            // Start combat (auto-retaliate)
+            if (!targetCombat.inCombat) {
+                combatSystem.startCombat(targetEntity, entity.id);
+            }
+            
+            // Check death
+            if (targetCombat.hitpoints <= 0) {
+                combatSystem.handleDeath(targetEntity, entity);
+            }
+        }
+        
+        // Handle heal spell (can heal self or others)
+        if (spell.type === 'heal' && targetUserId) {
+            // Find target entity (self or other player)
+            let healTargetEntityId = playerEntities.get(targetUserId);
+            if (!healTargetEntityId) healTargetEntityId = playerEntities.get(Number(targetUserId));
+            if (!healTargetEntityId) healTargetEntityId = playerEntities.get(String(targetUserId));
+            
+            const healTargetEntity = world.getEntity(healTargetEntityId);
+            if (!healTargetEntity) return respond({ success: false, error: 'Heal target not found' });
+            
+            const healTargetCombat = healTargetEntity.getComponent(Combat);
+            const healTargetPlayer = healTargetEntity.getComponent(Player);
+            
+            if (healTargetCombat && healTargetPlayer) {
+                const healAmount = spell.value;
+                const oldHp = healTargetCombat.hitpoints;
+                healTargetCombat.hitpoints = Math.min(healTargetCombat.maxHitpoints, healTargetCombat.hitpoints + healAmount);
+                const actualHeal = healTargetCombat.hitpoints - oldHp;
+                
+                // Update database
+                statements.updatePlayerStats.run(healTargetCombat.hitpoints, healTargetCombat.strength, healTargetPlayer.userId);
+                
+                // Notify players
+                if (roomId) {
+                    io.to(`room-${roomId}`).emit('spellHeal', {
+                        casterId: userId,
+                        targetId: targetUserId,
+                        spellId: spellId,
+                        healAmount: actualHeal,
+                        targetHp: healTargetCombat.hitpoints
+                    });
+                }
+            }
+        }
+        
+        // Handle teleport spell
+        if (spell.type === 'teleport' && targetX !== undefined && targetZ !== undefined) {
+            if (casterTransform) {
+                casterTransform.x = targetX;
+                casterTransform.z = targetZ;
+                
+                // Update database
+                statements.updatePlayerState.run(casterTransform.x, casterTransform.y, casterTransform.z, userId);
+                
+                // Notify all players
+                if (roomId) {
+                    io.to(`room-${roomId}`).emit('playerTeleported', {
+                        userId: userId,
+                        x: targetX,
+                        y: casterTransform.y,
+                        z: targetZ
+                    });
+                }
+            }
+        }
+        
+        // Emit generic spell cast for visual effects (include caster position)
+        if (roomId) {
+            const spellCastPayload = {
+                casterId: userId,
+                targetId: targetUserId,
+                spellId: spellId,
+                casterX: casterTransform ? casterTransform.x : 0,
+                casterY: casterTransform ? casterTransform.y + 0.5 : 0.5,
+                casterZ: casterTransform ? casterTransform.z : 0,
+                targetX: targetX,
+                targetZ: targetZ
+            };
+            console.log('SERVER: Broadcasting spellCast to room:', roomId, 'payload:', spellCastPayload);
+            io.to(`room-${roomId}`).emit('spellCast', spellCastPayload);
+        } else {
+            console.log('SERVER: No roomId found, cannot broadcast spellCast');
+        }
+        
+        respond({ success: true });
+    });
+
     // Handle disconnect
     socket.on('disconnect', () => {
         console.log(`Client disconnected: ${socket.id}`);
@@ -585,6 +757,21 @@ io.on('connection', (socket) => {
     // =====================
     // EDITOR / ADMIN EVENTS
     // =====================
+
+    // Check if user has an existing admin session
+    socket.on('checkAdminSession', (data, callback) => {
+        const { adminToken } = data;
+        if (!adminToken) {
+            callback({ success: false, hasSession: false });
+            return;
+        }
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (validation.valid) {
+            callback({ success: true, hasSession: true, token: adminToken });
+        } else {
+            callback({ success: false, hasSession: false });
+        }
+    });
 
     // Admin authentication
     socket.on('adminLogin', (data, callback) => {

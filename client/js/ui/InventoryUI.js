@@ -17,18 +17,14 @@ export class InventoryUI {
     init() {
         this.container = document.createElement('div');
         this.container.id = 'inventory-ui';
-        this.container.className = 'inventory-panel';
-        this.container.innerHTML = `
-            <div class="inventory-header">
-                <span>Inventory</span>
-                <button class="close-btn">&times;</button>
-            </div>
-            <div class="inventory-grid"></div>
-        `;
-        document.body.appendChild(this.container);
+        this.container.className = 'inventory-content';
+        this.createGrid();
+    }
 
-        // Create 28 slots
-        const grid = this.container.querySelector('.inventory-grid');
+    createGrid() {
+        const grid = document.createElement('div');
+        grid.className = 'inventory-grid';
+        
         for (let i = 0; i < 28; i++) {
             const slot = document.createElement('div');
             slot.className = 'inventory-slot';
@@ -40,12 +36,8 @@ export class InventoryUI {
             slot.addEventListener('click', (e) => this.onSlotClick(i, e));
             slot.addEventListener('contextmenu', (e) => this.onSlotRightClick(i, e));
         }
-
-        // Close button
-        this.container.querySelector('.close-btn').addEventListener('click', () => this.hide());
-
-        // Initially hidden
-        this.hide();
+        
+        this.container.appendChild(grid);
     }
 
     setupNetworkListeners() {
@@ -194,19 +186,21 @@ export class InventoryUI {
         }
     }
 
-    show() {
-        this.container.style.display = 'block';
-        this.isVisible = true;
-        // Request fresh data
+    getContentElement() {
+        // Request fresh data when content is requested
         this.networkManager.socket.emit('getInventory', (result) => {
             if (result.success) {
                 this.updateInventory(result.inventory);
             }
         });
+        return this.container;
+    }
+
+    show() {
+        this.isVisible = true;
     }
 
     hide() {
-        this.container.style.display = 'none';
         this.isVisible = false;
     }
 

@@ -9,7 +9,7 @@ export class AdminManager {
         this.tokenExpiry = 30 * 60 * 1000; // 30 minutes
         
         // Admin password (in production, this should be hashed and stored securely)
-        this.adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+        this.adminPassword = process.env.ADMIN_PASSWORD || '1';
     }
 
     // Validate admin password and issue token

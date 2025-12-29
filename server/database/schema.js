@@ -48,6 +48,9 @@ export function initializeDatabase(db) {
         if (!columnNames.includes('deaths')) {
             db.exec(`ALTER TABLE player_state ADD COLUMN deaths INTEGER DEFAULT 0`);
         }
+        if (!columnNames.includes('notes')) {
+            db.exec(`ALTER TABLE player_state ADD COLUMN notes TEXT DEFAULT ''`);
+        }
     } catch (err) {
         console.error('Migration error:', err);
     }
@@ -453,6 +456,10 @@ export function createStatements(db) {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `),
         removeWorldItem: db.prepare(`DELETE FROM world_items WHERE id = ?`),
-        clearRoomWorldItems: db.prepare(`DELETE FROM world_items WHERE room_id = ?`)
+        clearRoomWorldItems: db.prepare(`DELETE FROM world_items WHERE room_id = ?`),
+
+        // Notes operations (notepad persistence)
+        getNotes: db.prepare(`SELECT notes FROM player_state WHERE user_id = ?`),
+        saveNotes: db.prepare(`UPDATE player_state SET notes = ? WHERE user_id = ?`)
     };
 }

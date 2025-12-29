@@ -16,12 +16,8 @@ export class EquipmentUI {
     init() {
         this.container = document.createElement('div');
         this.container.id = 'equipment-ui';
-        this.container.className = 'equipment-panel';
+        this.container.className = 'equipment-content';
         this.container.innerHTML = `
-            <div class="equipment-header">
-                <span>Equipment</span>
-                <button class="close-btn">&times;</button>
-            </div>
             <div class="equipment-body">
                 <div class="equipment-slot" data-slot="head">
                     <div class="slot-label">Head</div>
@@ -51,7 +47,6 @@ export class EquipmentUI {
                 <div>Defense: <span id="eq-defense">0</span></div>
             </div>
         `;
-        document.body.appendChild(this.container);
 
         // Add click handlers for unequipping
         const slots = this.container.querySelectorAll('.equipment-slot');
@@ -62,11 +57,6 @@ export class EquipmentUI {
                 this.onSlotClick(slot.dataset.slot);
             });
         });
-
-        // Close button
-        this.container.querySelector('.close-btn').addEventListener('click', () => this.hide());
-
-        this.hide();
     }
 
     setupNetworkListeners() {
@@ -122,18 +112,20 @@ export class EquipmentUI {
         });
     }
 
-    show() {
-        this.container.style.display = 'block';
-        this.isVisible = true;
+    getContentElement() {
         this.networkManager.socket.emit('getInventory', (result) => {
             if (result.success) {
                 this.updateEquipment(result.equipment);
             }
         });
+        return this.container;
+    }
+
+    show() {
+        this.isVisible = true;
     }
 
     hide() {
-        this.container.style.display = 'none';
         this.isVisible = false;
     }
 
