@@ -1304,7 +1304,7 @@ setInterval(() => {
 }, TICK_INTERVAL);
 
 // Start the server
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080
 httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);
     console.log('Open http://localhost:3000 in your browser to view the application');
