@@ -278,7 +278,7 @@ export class CombatSystem {
             userId: player.userId
         });
 
-        // Respawn at origin
+        // Respawn at origin in same room
         transform.x = 0;
         transform.y = 0.5;
         transform.z = 0;
@@ -286,8 +286,8 @@ export class CombatSystem {
         // Heal to full
         combat.hitpoints = combat.maxHitpoints;
 
-        // Update database
-        this.statements.updatePlayerState.run(transform.x, transform.y, transform.z, player.userId);
+        // Update database (x, y, z, current_room_id, user_id)
+        this.statements.updatePlayerState.run(transform.x, transform.y, transform.z, player.roomId || 1, player.userId);
         this.statements.healPlayer.run(player.userId);
 
         // Notify all players of respawn

@@ -11,7 +11,7 @@ import Database from 'better-sqlite3';
 // ECS imports
 import { World } from './ecs/World.js';
 import { Entity } from './ecs/Entity.js';
-import { Transform, Player, Movement, Network, Combat, Inventory, Equipment, ActiveEffects } from './ecs/components/index.js';
+import { Transform, Player, Movement, Network, Combat, Inventory, Equipment, ActiveEffects, NPC } from './ecs/components/index.js';
 import { MovementSystem } from './ecs/systems/MovementSystem.js';
 import { NetworkSystem } from './ecs/systems/NetworkSystem.js';
 import { PersistenceSystem } from './ecs/systems/PersistenceSystem.js';
@@ -806,7 +806,7 @@ io.on('connection', (socket) => {
         const npcEntity = world.getEntity(npcEntityId);
         if (!npcEntity) return respond({ success: false, error: 'NPC not found' });
 
-        const npc = npcEntity.getComponent(require('./ecs/components/index.js').NPC);
+        const npc = npcEntity.getComponent(NPC);
         const npcCombat = npcEntity.getComponent(Combat);
         const npcTransform = npcEntity.getComponent(Transform);
 
