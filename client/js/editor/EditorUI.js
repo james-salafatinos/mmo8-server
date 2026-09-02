@@ -387,13 +387,30 @@ export class EditorUI {
                 const item = document.createElement('div');
                 item.className = 'asset-item';
                 item.dataset.assetId = asset.id;
-                item.innerHTML = `<span class="asset-icon">${this.getAssetIcon(asset)}</span> ${asset.name}`;
+
+                const iconSpan = document.createElement('span');
+                iconSpan.className = 'asset-icon';
+                iconSpan.textContent = this.getAssetIcon(asset);
+                item.appendChild(iconSpan);
+
+                const label = document.createElement('span');
+                label.textContent = asset.name;
+                item.appendChild(label);
+
                 item.addEventListener('click', () => this.selectAsset(asset.id));
                 item.draggable = true;
                 item.addEventListener('dragstart', (e) => {
                     e.dataTransfer.setData('assetId', asset.id);
                 });
                 items.appendChild(item);
+
+                if (asset.type === 'file') {
+                    this.editorManager.getAssetThumbnail(asset).then((url) => {
+                        if (url) {
+                            iconSpan.innerHTML = `<img class="asset-thumb" src="${url}" alt="">`;
+                        }
+                    });
+                }
             }
             
             categoryDiv.appendChild(items);

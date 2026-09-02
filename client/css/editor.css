@@ -293,6 +293,19 @@ body.editor-mode #scene-container {
 
 .asset-icon {
     font-size: 1rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+.asset-thumb {
+    width: 20px;
+    height: 20px;
+    object-fit: contain;
+    border-radius: 2px;
 }
 
 /* Inspector Panel (Right Panel) */
