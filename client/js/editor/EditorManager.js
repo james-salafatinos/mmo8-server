@@ -56,6 +56,58 @@ export class EditorManager {
         // Raycaster for object picking
         this.raycaster = new THREE.Raycaster();
         this.mouse = new THREE.Vector2();
+
+        // Cache of generated asset-palette thumbnails (assetId -> data URL)
+        this.thumbnailCache = new Map();
+    }
+
+    // Render a small preview image of a file-based asset for the palette icon
+    async getAssetThumbnail(asset) {
+        if (!asset || asset.type !== 'file' || !asset.path) return null;
+        if (this.thumbnailCache.has(asset.id)) return this.thumbnailCache.get(asset.id);
+
+        const dataUrl = await new Promise((resolve) => {
+            const size = 64;
+            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+            renderer.setSize(size, size);
+            renderer.setClearColor(0x000000, 0);
+
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 1000);
+
+            scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+            dirLight.position.set(2, 3, 2);
+            scene.add(dirLight);
+
+            this.gltfLoader.load(asset.path, (gltf) => {
+                const model = gltf.scene;
+                scene.add(model);
+
+                const box = new THREE.Box3().setFromObject(model);
+                const center = box.getCenter(new THREE.Vector3());
+                const dims = box.getSize(new THREE.Vector3());
+                const maxDim = Math.max(dims.x, dims.y, dims.z) || 1;
+
+                model.position.sub(center);
+
+                const distance = maxDim * 2.2;
+                camera.position.set(distance, distance * 0.8, distance);
+                camera.lookAt(0, 0, 0);
+
+                renderer.render(scene, camera);
+                const url = renderer.domElement.toDataURL('image/png');
+
+                renderer.dispose();
+                resolve(url);
+            }, undefined, () => {
+                renderer.dispose();
+                resolve(null);
+            });
+        });
+
+        this.thumbnailCache.set(asset.id, dataUrl);
+        return dataUrl;
     }
 
     // Check if user already has an admin session
@@ -287,15 +339,22 @@ export class EditorManager {
         const asset = this.findAsset(assetId);
         if (!asset) return null;
 
+        // File-based models (e.g. uncategorized assets) are expected to have
+        // their origin at the base, so they should sit directly on the ground
+        // rather than using the centered-pivot offset primitives/markers need.
+        const placePosition = asset.type === 'file'
+            ? { ...position, y: 0 }
+            : { ...position };
+
         const objectData = {
             id: this.nextObjectId++,
             assetId,
-            position: { ...position },
+            position: placePosition,
             rotation: { x: 0, y: 0, z: 0 },
             scale: { ...asset.defaultScale }
         };
 
-        const mesh = this.createMeshFromAsset(asset, position, objectData.rotation, objectData.scale);
+        const mesh = this.createMeshFromAsset(asset, placePosition, objectData.rotation, objectData.scale);
         mesh.userData.editorObjectId = objectData.id;
         mesh.userData.assetId = assetId;
 
