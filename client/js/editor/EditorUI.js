@@ -2,6 +2,8 @@
 import { EditorInput } from './EditorInput.js';
 import { ItemsEditor } from './ItemsEditor.js';
 import { TerrainBuilderUI } from './TerrainBuilderUI.js';
+import { AnimationEditorUI } from './AnimationEditorUI.js';
+import { AnimationManagerUI } from './AnimationManagerUI.js';
 
 export class EditorUI {
     constructor(editorManager, networkManager) {
@@ -19,6 +21,8 @@ export class EditorUI {
         this.editorInput = new EditorInput(editorManager, this);
 
         this.terrainBuilderUI = new TerrainBuilderUI(editorManager, networkManager, this);
+        this.animationEditorUI = new AnimationEditorUI(editorManager, networkManager);
+        this.animationManagerUI = new AnimationManagerUI(editorManager, networkManager);
     }
 
     createUI() {
@@ -128,6 +132,12 @@ export class EditorUI {
                 </button>
                 <button id="tool-terrain" class="editor-btn" title="Terrain Builder">
                     🗺 Terrain
+                </button>
+                <button id="tool-animations" class="editor-btn" title="Animation Editor">
+                    🎬 Animations
+                </button>
+                <button id="tool-event-bindings" class="editor-btn" title="Animation Manager">
+                    🔗 Triggers
                 </button>
                 <button id="tool-publish" class="editor-btn primary" title="Publish Room">
                     📤 Publish
@@ -279,6 +289,8 @@ export class EditorUI {
         
         document.getElementById('tool-items')?.addEventListener('click', () => this.toggleItemsEditor());
         document.getElementById('tool-terrain')?.addEventListener('click', () => this.terrainBuilderUI.open());
+        document.getElementById('tool-animations')?.addEventListener('click', () => this.animationEditorUI.open());
+        document.getElementById('tool-event-bindings')?.addEventListener('click', () => this.animationManagerUI.open());
         document.getElementById('tool-publish')?.addEventListener('click', () => this.handlePublish());
         document.getElementById('tool-revert')?.addEventListener('click', () => this.handleRevert());
         document.getElementById('tool-exit-editor')?.addEventListener('click', () => this.exitEditorMode());

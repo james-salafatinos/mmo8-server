@@ -1,5 +1,12 @@
 // Input Manager - handles touch/click input for movement
 import * as THREE from 'three';
+import { GameEvents } from './GameEvents.js';
+
+// Player rig (CharacterRig.js) is ~2.3 units tall, feet at mesh.position.y - GROUND_OFFSET
+// (0.5) and head top ~1.8 above mesh.position.y - size/center the spell-targeting highlight
+// box around the whole body instead of the old 1-unit cube's footprint.
+const OUTLINE_HEIGHT = 2.3;
+const OUTLINE_Y_OFFSET = 0.65;
 
 export class InputManager {
     constructor(game, networkManager) {
@@ -85,7 +92,7 @@ export class InputManager {
     
     createOutlineMesh() {
         // Create outline mesh for player targeting (slightly larger cube wireframe)
-        const geometry = new THREE.BoxGeometry(1.15, 1.15, 1.15);
+        const geometry = new THREE.BoxGeometry(1.15, OUTLINE_HEIGHT, 1.15);
         const edges = new THREE.EdgesGeometry(geometry);
         const material = new THREE.LineBasicMaterial({ 
             color: 0xffff00, 
@@ -412,7 +419,7 @@ export class InputManager {
             
             if (playerMesh && playerMesh.userData.userId) {
                 // Show outline on this player
-                this.outlineMesh.position.copy(playerMesh.position);
+                this.outlineMesh.position.set(playerMesh.position.x, playerMesh.position.y + OUTLINE_Y_OFFSET, playerMesh.position.z);
                 this.outlineMesh.material.color.setHex(includeSelf ? 0x44ff44 : 0xffff00);
                 this.outlineMesh.visible = true;
                 this.highlightedPlayer = playerMesh.userData.userId;
@@ -424,7 +431,7 @@ export class InputManager {
         if (includeSelf) {
             const localPlayer = this.game.playerManager.getLocalPlayer();
             if (localPlayer) {
-                this.outlineMesh.position.copy(localPlayer.position);
+                this.outlineMesh.position.set(localPlayer.position.x, localPlayer.position.y + OUTLINE_Y_OFFSET, localPlayer.position.z);
                 this.outlineMesh.material.color.setHex(0x44ff44); // Green for heal
                 this.outlineMesh.visible = true;
                 this.highlightedPlayer = this.game.playerManager.localUserId;
@@ -503,15 +510,20 @@ export class InputManager {
                 return;
             }
             
-            // Teleport spell - target ground location
+            // Teleport spell - target ground location. Stays single-room
+            // (unlike ordinary movement, teleport doesn't chase across a
+            // chunk boundary) - only raycasts the current room's own ground.
             if (spellType === 'teleport') {
                 const ground = this.game.getGround();
                 const groundIntersects = this.raycaster.intersectObject(ground);
-                
+
                 if (groundIntersects.length > 0) {
                     const point = groundIntersects[0].point;
-                    const x = Math.max(-25, Math.min(25, point.x));
-                    const z = Math.max(-25, Math.min(25, point.z));
+                    const local = this.game.chunkStreamer
+                        ? this.game.chunkStreamer.toCurrentRoomLocal(point.x, point.z)
+                        : { x: point.x, z: point.z };
+                    const x = Math.max(-25, Math.min(25, local.x));
+                    const z = Math.max(-25, Math.min(25, local.z));
                     this.castTeleportSpell(x, z);
                     return;
                 }
@@ -521,16 +533,27 @@ export class InputManager {
             }
         }
 
+        // Click-to-move raycasts the current room's ground AND every visually
+        // stitched neighbor chunk's ground (see RoomRenderer.syncNeighbors) -
+        // clicking a neighbor tile directly walks you there, no need to walk
+        // to the current chunk's edge first. The hit point is in world/render
+        // space; toCurrentRoomLocal converts it into what the server's `move`
+        // handler expects (local to whichever room is currently "current") -
+        // a value that can legitimately be beyond +/-25 when the click landed
+        // on a neighbor, which the server's existing edge-crossing logic
+        // (RoomTransitionSystem) already knows how to walk toward and cross.
         const ground = this.game.getGround();
-        const intersects = this.raycaster.intersectObject(ground);
+        const neighborGrounds = this.game.roomRenderer?.getNeighborGroundMeshes() || [];
+        const intersects = this.raycaster.intersectObjects([ground, ...neighborGrounds], false);
 
         if (intersects.length > 0) {
             const point = intersects[0].point;
-            const x = Math.max(-25, Math.min(25, point.x));
-            const z = Math.max(-25, Math.min(25, point.z));
+            const local = this.game.chunkStreamer
+                ? this.game.chunkStreamer.toCurrentRoomLocal(point.x, point.z)
+                : { x: point.x, z: point.z };
 
-            this.showTapIndicator(x, z);
-            this.networkManager.sendMove(x, z);
+            this.showTapIndicator(point.x, point.z);
+            this.networkManager.sendMove(local.x, local.z);
         }
     }
     
@@ -585,18 +608,27 @@ export class InputManager {
                 }
             }
             
-            // Check if it's the ground
-            if (obj.name === 'ground') {
+            // Check if it's the ground - the current room's own ('ground')
+            // or a visually-stitched neighbor chunk's ('neighborGround', see
+            // RoomRenderer.createGroundTile) - either way it's a valid
+            // click-to-move target now that clicking a neighbor can walk you
+            // there (see ChunkStreamer.toCurrentRoomLocal).
+            if (obj.name === 'ground' || obj.name === 'neighborGround') {
                 hitGround = true;
                 groundPoint = hit.point;
             }
             
-            // Check if it's a player mesh (boxes with player data)
-            if (obj.geometry && obj.geometry.type === 'BoxGeometry' && obj.parent === this.game.scene) {
-                // Find player data from PlayerManager
-                const playerData = this.game.playerManager.getPlayerByMesh(obj);
-                if (playerData) {
-                    hitPlayer = playerData;
+            // Check if it's a player rig (deeply nested - walk up to the root via
+            // userData.userId, same as getUserIdFromMesh does for spell targeting)
+            if (!hitPlayer) {
+                const userId = this.game.playerManager.getUserIdFromMesh(obj);
+                if (userId && String(userId) !== String(this.game.playerManager.localUserId)) {
+                    const player = this.game.playerManager.players.get(userId)
+                                || this.game.playerManager.players.get(Number(userId))
+                                || this.game.playerManager.players.get(String(userId));
+                    if (player) {
+                        hitPlayer = player.data;
+                    }
                 }
             }
             
@@ -650,12 +682,12 @@ export class InputManager {
         // Add player-specific options
         if (hitPlayer) {
             items.push({
-                label: `👤 ${hitPlayer.username}`,
+                label: hitPlayer.username,
                 type: 'player',
                 action: () => console.log('Selected player:', hitPlayer.username)
             });
             items.push({
-                label: '⚔️ Attack',
+                label: 'Attack',
                 type: 'player',
                 action: () => {
                     console.log('Attacking player:', hitPlayer.userId, hitPlayer.username);
@@ -664,7 +696,7 @@ export class InputManager {
                 }
             });
             items.push({
-                label: '💬 Whisper',
+                label: 'Whisper',
                 type: 'player',
                 action: () => {
                     const chatInput = document.getElementById('chat-input');
@@ -674,7 +706,7 @@ export class InputManager {
                 }
             });
             items.push({
-                label: '🎯 Follow',
+                label: 'Follow',
                 type: 'player',
                 action: () => {
                     this.startFollowing(hitPlayer.userId);
@@ -682,11 +714,11 @@ export class InputManager {
                 }
             });
         }
-        
+
         // Add world item pickup option (dropped items)
         if (hitWorldItem) {
             items.push({
-                label: `🎁 Pick up ${hitWorldItem.name}`,
+                label: `Pick up ${hitWorldItem.name}`,
                 type: 'worlditem',
                 action: () => {
                     this.pickupWorldItem(hitWorldItem.entityId);
@@ -709,16 +741,22 @@ export class InputManager {
             });
         }
         
-        // Add ground options
+        // Add ground options. groundPoint is in world/render space (may be on
+        // a neighboring chunk's tile) - convert to the current room's own
+        // local frame for the actual move command, same as the primary
+        // click-to-move path (see handleTap).
         if (hitGround && groundPoint) {
-            const x = Math.max(-25, Math.min(25, groundPoint.x)).toFixed(1);
-            const z = Math.max(-25, Math.min(25, groundPoint.z)).toFixed(1);
+            const local = this.game.chunkStreamer
+                ? this.game.chunkStreamer.toCurrentRoomLocal(groundPoint.x, groundPoint.z)
+                : { x: groundPoint.x, z: groundPoint.z };
+            const displayX = groundPoint.x.toFixed(1);
+            const displayZ = groundPoint.z.toFixed(1);
             items.push({
-                label: `📍 Move here (${x}, ${z})`,
+                label: `Move here (${displayX}, ${displayZ})`,
                 type: 'ground',
                 action: () => {
-                    this.showTapIndicator(parseFloat(x), parseFloat(z));
-                    this.networkManager.sendMove(parseFloat(x), parseFloat(z));
+                    this.showTapIndicator(groundPoint.x, groundPoint.z);
+                    this.networkManager.sendMove(local.x, local.z);
                     this.hideContextMenu();
                 }
             });
@@ -726,7 +764,7 @@ export class InputManager {
         
         // Always add cancel
         items.push({
-            label: '✕ Cancel',
+            label: 'Cancel',
             type: 'cancel',
             action: () => this.hideContextMenu()
         });
@@ -814,16 +852,16 @@ export class InputManager {
     // Get interaction label based on type
     getInteractionLabel(interactionType) {
         switch (interactionType) {
-            case 'door': return '🚪 Open Door';
-            case 'chest': return '📦 Loot';
-            case 'npc': return '💬 Talk';
-            case 'switch': return '🔘 Toggle';
-            case 'portal': return '🌀 Teleport';
-            case 'bank': return '🏦 Open Bank';
-            case 'pickup': return '🎁 Pick Up';
-            case 'item_spawn': return '📦 Pickup';
-            case 'custom': return '✨ Interact';
-            default: return '👆 Interact';
+            case 'door': return 'Open Door';
+            case 'chest': return 'Loot';
+            case 'npc': return 'Talk';
+            case 'switch': return 'Toggle';
+            case 'portal': return 'Teleport';
+            case 'bank': return 'Open Bank';
+            case 'pickup': return 'Pick Up';
+            case 'item_spawn': return 'Pickup';
+            case 'custom': return 'Interact';
+            default: return 'Interact';
         }
     }
     
@@ -1264,8 +1302,13 @@ export class InputManager {
     
     // Finish spell cast (cleanup)
     finishSpellCast() {
-        const localPlayer = this.game.playerManager.players.get(this.game.playerManager.localUserId);
-        if (localPlayer && localPlayer.animator) localPlayer.animator.triggerAction('cast');
+        // Local prediction: the caster never receives their own spellCast echo (see Game.js's
+        // remote listener, which explicitly skips it), so this is the only place the local
+        // player's own cast animation fires from.
+        GameEvents.emit('spell:cast', {
+            casterId: this.game.playerManager.localUserId,
+            spellId: this.selectedSpell?.id
+        });
 
         this.hideSpellTargetHighlight();
         this.setCastMode(false);

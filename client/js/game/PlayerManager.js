@@ -15,6 +15,22 @@ export class PlayerManager {
         this.localUserId = userData.user.id;
         this.players = new Map(); // userId -> { mesh, animator, label, healthBar, chatBubble, data, targetPos }
         this.chatBubbleDuration = 5000; // 5 seconds
+
+        // World-unit offset from the current room's own local frame to the
+        // fixed session anchor ChunkStreamer picks (see ChunkStreamer.js) -
+        // added to every incoming position so avatars land at the correct
+        // spot in the anchor-relative scene, not just "local to whichever
+        // room the server currently has me in". Updated by ChunkStreamer
+        // whenever the player's current room changes; a plain reassignment
+        // (not per-player state), so it applies to every player's *next*
+        // position update without needing to retroactively shift meshes
+        // already on screen - the following gameState/fullState tick (at
+        // most 50ms away) picks it up naturally.
+        this.renderOffset = { x: 0, z: 0 };
+    }
+
+    setRenderOffset(x, z) {
+        this.renderOffset = { x, z };
     }
 
     initPlayers(playersData) {
@@ -41,6 +57,8 @@ export class PlayerManager {
 
     addOrUpdatePlayer(playerData) {
         let player = this.players.get(playerData.userId);
+        const rx = playerData.x + this.renderOffset.x;
+        const rz = playerData.z + this.renderOffset.z;
 
         if (!player) {
             // Create new player
@@ -52,23 +70,23 @@ export class PlayerManager {
         }
 
         // Update target position for interpolation
-        player.targetPos = new THREE.Vector3(playerData.x, playerData.y, playerData.z);
-        
+        player.targetPos = new THREE.Vector3(rx, playerData.y, rz);
+
         // Update health bar only if HP actually changed
         const oldHp = player.data?.hitpoints;
         const newHp = playerData.hitpoints;
         if (newHp !== undefined && newHp !== oldHp) {
             this.updateHealthBar(player, newHp, playerData.max_hitpoints || 10);
         }
-        
+
         player.data = playerData;
 
         // If moving, also track the server's target
         if (playerData.isMoving && playerData.targetX !== null) {
             player.serverTarget = new THREE.Vector3(
-                playerData.targetX,
+                playerData.targetX + this.renderOffset.x,
                 playerData.y,
-                playerData.targetZ
+                playerData.targetZ + this.renderOffset.z
             );
         } else {
             player.serverTarget = null;
@@ -76,20 +94,23 @@ export class PlayerManager {
     }
 
     createPlayerMesh(playerData) {
+        const rx = playerData.x + this.renderOffset.x;
+        const rz = playerData.z + this.renderOffset.z;
+
         // Procedural rig (see CharacterRig.js) - its root is a drop-in replacement for the
         // old cube mesh: same position/rotation convention, same raycast/dispose call sites.
         const rig = createCharacterRig();
         const mesh = rig.root;
-        mesh.position.set(playerData.x, playerData.y, playerData.z);
+        mesh.position.set(rx, playerData.y, rz);
         mesh.userData.userId = playerData.userId;
 
         // Create name label
         const label = this.createLabel(playerData.username, playerData.color);
-        label.position.set(playerData.x, playerData.y + LABEL_Y, playerData.z);
+        label.position.set(rx, playerData.y + LABEL_Y, rz);
 
         // Create health bar
         const healthBar = this.createHealthBar(playerData.hitpoints || 10, playerData.max_hitpoints || 10);
-        healthBar.position.set(playerData.x, playerData.y + HEALTHBAR_Y, playerData.z);
+        healthBar.position.set(rx, playerData.y + HEALTHBAR_Y, rz);
 
         return {
             mesh,
@@ -99,7 +120,7 @@ export class PlayerManager {
             chatBubble: null,
             chatTimeout: null,
             data: playerData,
-            targetPos: new THREE.Vector3(playerData.x, playerData.y, playerData.z),
+            targetPos: new THREE.Vector3(rx, playerData.y, rz),
             serverTarget: null
         };
     }
@@ -278,15 +299,6 @@ export class PlayerManager {
         return player ? player.data : null;
     }
     
-    // Get player data by mesh (for raycasting context menu)
-    getPlayerByMesh(mesh) {
-        for (const [userId, player] of this.players) {
-            if (player.mesh === mesh) {
-                return player.data;
-            }
-        }
-        return null;
-    }
 
     // Show a chat message above a player's head as a separate bubble sprite
     showChatBubble(userId, message) {

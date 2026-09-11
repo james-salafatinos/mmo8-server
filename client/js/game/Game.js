@@ -1,6 +1,9 @@
 // Main Game class - Three.js scene and game loop
 import * as THREE from 'three';
 import { PlayerManager } from './PlayerManager.js';
+import { setAnimationDefinitions } from './PoseAnimator.js';
+import { GameEvents } from './GameEvents.js';
+import { EventAnimationManager, setEventBindings } from './EventAnimationManager.js';
 import { InputManager } from './InputManager.js';
 import { SpellProjectileManager } from './SpellProjectileManager.js';
 import { InventoryUI } from '../ui/InventoryUI.js';
@@ -19,7 +22,12 @@ export class Game {
         this.playerManager = null;
         this.inputManager = null;
         this.ground = null;
+        this.groundGrid = null;
         this.clock = new THREE.Clock();
+
+        // Set by app.js after construction, for InputManager/ChunkStreamer to reach.
+        this.roomRenderer = null;
+        this.chunkStreamer = null;
         
         // UI Components
         this.inventoryUI = null;
@@ -65,6 +73,20 @@ export class Game {
 
         // Setup network callbacks
         this.setupNetworkCallbacks();
+
+        // Load procedural animation definitions (PoseAnimator falls back to its own built-in
+        // defaults for anything not yet in the DB, or if this hasn't resolved yet).
+        this.networkManager.socket.emit('getAnimations', {}, (result) => {
+            if (result?.success) setAnimationDefinitions(result.animations);
+        });
+
+        // Load event->animation bindings (see EventAnimationManager.js) and start listening for
+        // the triggers they reference - falls back to no bindings (nothing plays) until this
+        // resolves, same as the animations load above.
+        this.networkManager.socket.emit('getEventBindings', {}, (result) => {
+            if (result?.success) setEventBindings(result.bindings);
+        });
+        this.eventAnimationManager = new EventAnimationManager(this.playerManager);
 
         // Start game loop
         this.animate();
@@ -114,9 +136,18 @@ export class Game {
         this.scene.add(this.ground);
 
         // Add grid for visual reference
-        const gridHelper = new THREE.GridHelper(50, 50, 0x2d6a30, 0x2d6a30);
-        gridHelper.position.y = 0.01;
-        this.scene.add(gridHelper);
+        this.groundGrid = new THREE.GridHelper(50, 50, 0x2d6a30, 0x2d6a30);
+        this.groundGrid.position.y = 0.01;
+        this.scene.add(this.groundGrid);
+    }
+
+    // Called by ChunkStreamer whenever the current room's offset from the
+    // fixed session anchor changes (see ChunkStreamer.js) - the current
+    // room's own ground plane moves right along with its objects, so
+    // click-to-move raycasts against getGround() land in the right spot.
+    setGroundOffset(x, z) {
+        this.ground.position.set(x, 0, z);
+        this.groundGrid.position.set(x, 0.01, z);
     }
 
     setupCamera() {
@@ -210,24 +241,28 @@ export class Game {
             const player = this.playerManager.players.get(userId)
                         || this.playerManager.players.get(Number(userId))
                         || this.playerManager.players.get(String(userId));
-            
+
             if (player) {
+                // x/y/z are local to the teleporting player's own current room
+                // (teleport spell stays single-room) - apply the same
+                // anchor-relative render offset as every other position update.
+                const off = this.playerManager.renderOffset;
+                const rx = x + off.x, rz = z + off.z;
                 // Instant position update (no lerp)
-                player.mesh.position.set(x, y, z);
-                player.targetPos.set(x, y, z);
+                player.mesh.position.set(rx, y, rz);
+                player.targetPos.set(rx, y, rz);
             }
         });
         
-        // Trigger the attacker's swing animation on every hit/miss (covers both directions -
-        // combatHit/combatMiss are sent to both the attacker and defender sockets).
-        const triggerAttackAnim = (data) => {
-            const attacker = this.playerManager.players.get(data.attackerId)
-                          || this.playerManager.players.get(Number(data.attackerId))
-                          || this.playerManager.players.get(String(data.attackerId));
-            if (attacker && attacker.animator) attacker.animator.triggerAction('attack');
+        // Relay hit/miss onto the client-local event bus - what (if anything) plays is decided
+        // by the admin-authored bindings EventAnimationManager loaded at startup, not hardcoded
+        // here (see GameEvents.js / EventAnimationManager.js). combatHit/combatMiss are sent to
+        // both the attacker and defender sockets, so this fires on both ends.
+        const relayAttackEvent = (data) => {
+            GameEvents.emit('combat:attack', { attackerId: data.attackerId, defenderId: data.defenderId });
         };
-        this.networkManager.socket.on('combatHit', triggerAttackAnim);
-        this.networkManager.socket.on('combatMiss', triggerAttackAnim);
+        this.networkManager.socket.on('combatHit', relayAttackEvent);
+        this.networkManager.socket.on('combatMiss', relayAttackEvent);
 
         // Handle spell cast from other players (render their projectiles)
         console.log('CLIENT: Registering spellCast listener');
@@ -242,10 +277,11 @@ export class Game {
             }
             console.log('CLIENT: Rendering spell from other player');
 
+            GameEvents.emit('spell:cast', { casterId, targetId, spellId });
+
             const caster = this.playerManager.players.get(casterId)
                         || this.playerManager.players.get(Number(casterId))
                         || this.playerManager.players.get(String(casterId));
-            if (caster && caster.animator) caster.animator.triggerAction('cast');
 
             // Spell definitions for visual rendering
             const spellDefs = {

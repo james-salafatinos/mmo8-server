@@ -30,7 +30,7 @@ function makePlayerEntity(roomId, x, z) {
 }
 
 describe('RoomTransitionSystem', () => {
-    it('hands the player off to the neighboring chunk when they cross an edge', () => {
+    it('hands the player off to the neighboring chunk when they cross the true edge', () => {
         const roomA = { id: 'A', grid_x: 0, grid_y: 0 };
         const roomB = { id: 'B', grid_x: 1, grid_y: 0 };
         const roomManager = makeRoomManager({ A: roomA }, (room, dx, dz) => (dx === 1 && dz === 0 ? roomB : null));
@@ -46,12 +46,50 @@ describe('RoomTransitionSystem', () => {
         const transform = e.getComponent(Transform);
         const player = e.getComponent(Player);
         expect(player.roomId).toBe('B');
-        expect(transform.x).toBeCloseTo(-23); // -25 + 2 overshoot
+        expect(transform.x).toBeCloseTo(-23); // 27 - 50 (one chunk width): pure coordinate shift
         expect(transform.z).toBe(3); // lateral axis untouched
         expect(e.getComponent(Movement).isMoving).toBe(false);
         expect(roomManager.joinRoom).toHaveBeenCalledWith('socket-1', 'B', 1);
         expect(roomManager._socketEmit).toHaveBeenCalledWith('roomTransition', expect.objectContaining({ roomId: 'B' }));
         expect(roomManager._socketEmit).toHaveBeenCalledWith('worldItems', { items: [] });
+    });
+
+    it('does not trigger at or short of the true edge (a stationary player standing right at 25 stays put)', () => {
+        const roomA = { id: 'A', grid_x: 0, grid_y: 0 };
+        const roomB = { id: 'B', grid_x: 1, grid_y: 0 };
+        const roomManager = makeRoomManager({ A: roomA }, (room, dx, dz) => (dx === 1 && dz === 0 ? roomB : null));
+        const worldItemSystem = { getWorldItemsInRoom: vi.fn(() => []) };
+
+        const world = new World();
+        world.addSystem(new RoomTransitionSystem(roomManager, worldItemSystem));
+
+        const e = makePlayerEntity('A', 25, 3); // exactly at the edge, not past it
+        world.addEntity(e);
+        world.update(0.016);
+
+        expect(e.getComponent(Player).roomId).toBe('A');
+        expect(roomManager.joinRoom).not.toHaveBeenCalled();
+    });
+
+    it('preserves world-space continuity: a small overshoot lands just past the neighbor edge, not on a fixed landing spot', () => {
+        const roomA = { id: 'A', grid_x: 0, grid_y: 0 };
+        const roomB = { id: 'B', grid_x: 1, grid_y: 0 };
+        const roomManager = makeRoomManager({ A: roomA }, (room, dx, dz) => (dx === 1 && dz === 0 ? roomB : null));
+        const worldItemSystem = { getWorldItemsInRoom: vi.fn(() => []) };
+
+        const world = new World();
+        world.addSystem(new RoomTransitionSystem(roomManager, worldItemSystem));
+
+        // Realistic single-tick overshoot at 3 units/sec, 60Hz: a few
+        // hundredths of a unit past the true edge - the client's fixed
+        // render anchor (see ChunkStreamer.js) means this tiny, continuous
+        // shift is what makes the crossing look seamless instead of a jump.
+        const e = makePlayerEntity('A', 25.05, 3);
+        world.addEntity(e);
+        world.update(0.016);
+
+        const transform = e.getComponent(Transform);
+        expect(transform.x).toBeCloseTo(-24.95); // 25.05 - 50, not snapped to a fixed inset
     });
 
     it('carries an in-flight movement target across the same shift, so movement continues into the neighbor', () => {
@@ -74,59 +112,7 @@ describe('RoomTransitionSystem', () => {
         expect(movement.targetZ).toBe(3);
     });
 
-    it('triggers before reaching the true edge (within TRIGGER_MARGIN), matching what a real click-to-move can produce', () => {
-        const roomA = { id: 'A', grid_x: 0, grid_y: 0 };
-        const roomB = { id: 'B', grid_x: 1, grid_y: 0 };
-        const roomManager = makeRoomManager({ A: roomA }, (room, dx, dz) => (dx === 1 && dz === 0 ? roomB : null));
-        const worldItemSystem = { getWorldItemsInRoom: vi.fn(() => []) };
-
-        const world = new World();
-        world.addSystem(new RoomTransitionSystem(roomManager, worldItemSystem));
-
-        // 24 is short of the true edge (25) - InputManager clamps every click
-        // target to at most 25, so a real player arrives at values like this,
-        // never past it.
-        const e = makePlayerEntity('A', 24, 3);
-        e.getComponent(Movement).clearTarget(); // simulate having already arrived (isMoving:false)
-        world.addEntity(e);
-        world.update(0.016);
-
-        const transform = e.getComponent(Transform);
-        expect(e.getComponent(Player).roomId).toBe('B');
-        // Landed LANDING_INSET past the neighbor's near edge, not exactly on
-        // it - landing exactly on the border would put them right back
-        // inside B's own trigger margin for this same edge, immediately
-        // bouncing them back to A (confirmed as a real bug during manual
-        // testing: an infinite same-tick room-A/room-B ping-pong).
-        expect(transform.x).toBe(-23);
-        expect(transform.z).toBe(3);
-    });
-
-    it('clears (rather than shifts) a still-in-flight target that never actually cleared the true edge', () => {
-        // This is the actual root cause of the ping-pong regression below:
-        // an early trigger with target=24 (never past the true 25 edge)
-        // used to shift the target to 24-50=-26, a *backward*-pointing
-        // target in B's frame that walked the player straight back toward
-        // the shared border and re-triggered the same early crossing.
-        const roomA = { id: 'A', grid_x: 0, grid_y: 0 };
-        const roomB = { id: 'B', grid_x: 1, grid_y: 0 };
-        const roomManager = makeRoomManager({ A: roomA }, (room, dx, dz) => (dx === 1 && dz === 0 ? roomB : null));
-        const worldItemSystem = { getWorldItemsInRoom: vi.fn(() => []) };
-
-        const world = new World();
-        world.addSystem(new RoomTransitionSystem(roomManager, worldItemSystem));
-
-        const e = makePlayerEntity('A', 24, 3);
-        e.getComponent(Movement).setTarget(24, 0.5, 3); // still "moving" toward a target inside this room
-        world.addEntity(e);
-        world.update(0.016);
-
-        const movement = e.getComponent(Movement);
-        expect(movement.isMoving).toBe(false);
-        expect(movement.targetX).toBeNull();
-    });
-
-    it('does not bounce straight back on the next tick after an early-triggered crossing (regression)', () => {
+    it('does not bounce straight back on the next tick after a crossing (regression)', () => {
         // Mutual neighbors, mirroring a real terrain-builder setup: A(0,0)
         // and B(1,0) each report the other as their neighbor in the shared
         // direction. getRoom must resolve dynamically off player.roomId,
@@ -144,7 +130,7 @@ describe('RoomTransitionSystem', () => {
         const world = new World();
         world.addSystem(new RoomTransitionSystem(roomManager, worldItemSystem));
 
-        const e = makePlayerEntity('A', 24, 0); // within TRIGGER_MARGIN, short of the true edge
+        const e = makePlayerEntity('A', 25.05, 0); // a realistic small overshoot past the true edge
         world.addEntity(e);
         world.update(0.016); // A -> B
 

@@ -65,6 +65,48 @@ describe('CombatSystem', () => {
         expect(io._socketEmit).not.toHaveBeenCalled();
     });
 
+    it('converts the target position into the attacker\'s frame when they are in different, nearby rooms', () => {
+        const world = new World();
+        const io = makeIo();
+        const roomManager = { getFrameOffset: vi.fn(() => ({ x: -50, z: 0 })) };
+        const combat = new CombatSystem(world, io, makeStatements(), roomManager);
+        const attacker = makeCombatant(1, 0);
+        const target = makeCombatant(2, 5); // target's own local x=5, but in a room offset -50 from attacker's
+        attacker.getComponent(Player).roomId = 'A';
+        target.getComponent(Player).roomId = 'B';
+        world.addEntity(attacker);
+        world.addEntity(target);
+        combat.startCombat(attacker, target.id);
+
+        combat.update(0.016);
+
+        expect(roomManager.getFrameOffset).toHaveBeenCalledWith('B', 'A');
+        // Target's true position in the attacker's own frame is 5 + (-50) = -45,
+        // not the target's raw local x=5 - moving toward the latter would walk
+        // the wrong direction entirely.
+        expect(attacker.getComponent(Movement).targetX).toBeCloseTo(-45);
+        expect(attacker.getComponent(Movement).isMoving).toBe(true);
+    });
+
+    it('gives up the chase when the target is in a room with no computable spatial relationship', () => {
+        const world = new World();
+        const io = makeIo();
+        const roomManager = { getFrameOffset: vi.fn(() => null) };
+        const combat = new CombatSystem(world, io, makeStatements(), roomManager);
+        const attacker = makeCombatant(1, 0);
+        const target = makeCombatant(2, 5);
+        attacker.getComponent(Player).roomId = 'A';
+        target.getComponent(Player).roomId = 'UnrelatedUngriddedRoom';
+        world.addEntity(attacker);
+        world.addEntity(target);
+        combat.startCombat(attacker, target.id);
+
+        combat.update(0.016);
+
+        expect(attacker.getComponent(Combat).inCombat).toBe(false);
+        expect(attacker.getComponent(Movement).isMoving).toBe(false);
+    });
+
     it('applies damage on a hit roll, and the defender auto-retaliates within the same tick', () => {
         // CombatSystem.update() snapshots ALL entities into one flat array before looping, so
         // when the attack triggers startCombat() on the defender (auto-retaliate), the defender

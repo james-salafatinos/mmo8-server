@@ -2,10 +2,11 @@
 import { Transform, Player, Movement, Combat, Equipment, ActiveEffects } from '../components/index.js';
 
 export class CombatSystem {
-    constructor(world, io, statements) {
+    constructor(world, io, statements, roomManager) {
         this.world = world;
         this.io = io;
         this.statements = statements;
+        this.roomManager = roomManager;
         console.log('CombatSystem initialized');
     }
 
@@ -52,9 +53,30 @@ export class CombatSystem {
                 continue;
             }
 
+            // Target may be in a different (but nearby, gridded) room than
+            // the attacker - convert its position into the attacker's own
+            // local frame before comparing/chasing, the same way a click
+            // target that lands in a neighboring chunk is expressed (see
+            // RoomTransitionSystem.js). Same-room is resolved without
+            // needing roomManager at all (tests construct this system
+            // without one, and same-room combat must keep working
+            // regardless). If the rooms differ and have no computable
+            // spatial relationship (different ungridded rooms, most likely),
+            // there's nothing to chase across, so give up instead of
+            // comparing two unrelated local coordinate spaces.
+            const offset = targetPlayer.roomId === player.roomId
+                ? { x: 0, z: 0 }
+                : this.roomManager?.getFrameOffset(targetPlayer.roomId, player.roomId);
+            if (!offset) {
+                this.stopCombat(entity);
+                continue;
+            }
+            const targetX = targetTransform.x + offset.x;
+            const targetZ = targetTransform.z + offset.z;
+
             // Calculate distance to target
-            const dx = targetTransform.x - transform.x;
-            const dz = targetTransform.z - transform.z;
+            const dx = targetX - transform.x;
+            const dz = targetZ - transform.z;
             const distance = Math.sqrt(dx * dx + dz * dz);
 
             const attackRange = 1.5; // Must be within 1.5 units to attack
@@ -62,7 +84,7 @@ export class CombatSystem {
             if (distance > attackRange) {
                 // Move towards target
                 if (!movement.isMoving) {
-                    movement.setTarget(targetTransform.x, targetTransform.y, targetTransform.z);
+                    movement.setTarget(targetX, targetTransform.y, targetZ);
                 }
             } else {
                 // In range - stop moving and attack

@@ -69,3 +69,63 @@ describe('RoomManager grid placement', () => {
         expect(result.success).toBe(false);
     });
 });
+
+describe('RoomManager proximity (player visibility / chat / combat radius)', () => {
+    it('getRoomsWithinRadius includes the room itself plus every gridded room within range', () => {
+        const center = roomManager.createRoom('Center', '', 0, 0).room;
+        roomManager.createRoom('East', '', 1, 0);
+        roomManager.createRoom('Diag', '', 1, 1);
+        roomManager.createRoom('TooFar', '', 2, 0);
+        roomManager.createRoom('Unrelated'); // ungridded - never counts as "within range" of anything
+
+        const nearby = roomManager.getRoomsWithinRadius(roomManager.getRoom(center.id), 1);
+        const names = nearby.map(n => n.room.name).sort();
+
+        expect(names).toEqual(['Center', 'Diag', 'East'].sort());
+    });
+
+    it('getRoomsWithinRadius on an ungridded room returns only that room', () => {
+        const plain = roomManager.createRoom('Plain').room;
+        const nearby = roomManager.getRoomsWithinRadius(roomManager.getRoom(plain.id), 1);
+        expect(nearby).toEqual([{ room: roomManager.getRoom(plain.id), dx: 0, dz: 0 }]);
+    });
+
+    it('getFrameOffset converts between two gridded rooms\' local frames', () => {
+        const a = roomManager.createRoom('A', '', 0, 0).room;
+        const b = roomManager.createRoom('B', '', 1, 0).room;
+
+        expect(roomManager.getFrameOffset(a.id, b.id)).toEqual({ x: -50, z: 0 });
+        expect(roomManager.getFrameOffset(b.id, a.id)).toEqual({ x: 50, z: 0 });
+        expect(roomManager.getFrameOffset(a.id, a.id)).toEqual({ x: 0, z: 0 });
+    });
+
+    it('getFrameOffset returns null when either room is ungridded', () => {
+        const gridded = roomManager.createRoom('Gridded', '', 0, 0).room;
+        const plain = roomManager.createRoom('Plain').room;
+
+        expect(roomManager.getFrameOffset(gridded.id, plain.id)).toBeNull();
+        expect(roomManager.getFrameOffset(plain.id, plain.id)).toEqual({ x: 0, z: 0 }); // same room, trivial
+    });
+
+    it('broadcastToNearbyRooms reaches sockets in the room itself and nearby rooms, not distant ones', () => {
+        const a = roomManager.createRoom('A', '', 0, 0).room;
+        const b = roomManager.createRoom('B', '', 1, 0).room;
+        const farRoom = roomManager.createRoom('Far', '', 5, 5).room;
+
+        const io = roomManager.io;
+        io.sockets.sockets.set('sock-a', { join() {}, leave() {} });
+        io.sockets.sockets.set('sock-b', { join() {}, leave() {} });
+        io.sockets.sockets.set('sock-far', { join() {}, leave() {} });
+        const received = [];
+        io.to = (socketId) => ({ emit: (event, data) => received.push({ socketId, event, data }) });
+
+        roomManager.joinRoom('sock-a', a.id);
+        roomManager.joinRoom('sock-b', b.id);
+        roomManager.joinRoom('sock-far', farRoom.id);
+
+        roomManager.broadcastToNearbyRooms(a.id, 'chatMessage', { message: 'hi' });
+
+        const reachedSockets = received.map(r => r.socketId).sort();
+        expect(reachedSockets).toEqual(['sock-a', 'sock-b']);
+    });
+});

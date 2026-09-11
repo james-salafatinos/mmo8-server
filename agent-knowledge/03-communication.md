@@ -39,12 +39,12 @@ see part 2), `fullState`, `worldItems`, and a `playerJoined` broadcast to the ro
 
 | Event | Dir | Payload | Notes |
 |---|---|---|---|
-| `move` | C→S fire | `{x, z}` | No ack. Sets ECS `Movement` target; also cancels the mover's combat server-side. |
-| `gameState` | S→C push | `{players[], roomId, timestamp}` | Broadcast per-room at 20 Hz (`NetworkSystem`), only to sockets in that room. |
-| `fullState` | S→C push | `{players[], roomId}` | Sent once on login/joinRoom, not on a timer. |
-| `playerJoined` / `playerLeft` | S→C push | `{userId, username, color?}` | Room-scoped on join; `playerLeft` on disconnect is **global** (`io.emit`), not room-scoped. |
+| `move` | C→S fire | `{x, z}` | No ack. Sets ECS `Movement` target - not clamped client-side to the current room anymore, so this can legitimately be a value that only makes sense in a neighboring chunk (see [01-client.md](01-client.md)'s `ChunkStreamer` entry); also cancels the mover's combat server-side. |
+| `gameState` | S→C push | `{players[], roomId, timestamp}` | Broadcast at 20 Hz (`NetworkSystem`) to every socket in `roomId` **and every gridded room within `PROXIMITY_RADIUS`** of it - `players[]` includes those nearby rooms' occupants too, each already shifted into the receiving room's own local frame (see `RoomManager.getRoomsWithinRadius`/`getFrameOffset` in [02-server.md](02-server.md)). Ungridded rooms fall back to the old exact-room-only set automatically. |
+| `fullState` | S→C push | `{players[], roomId}` | Sent once on login/joinRoom, not on a timer. Same proximity+offset scoping as `gameState`. |
+| `playerJoined` / `playerLeft` | S→C push | `{userId, username, color?}` | Room-scoped on join; `playerLeft` on disconnect is **global** (`io.emit`), not room-scoped. Not re-broadcast on a chunk crossing (`roomTransition`) - only login/logout. |
 | `playerTeleported` | S→C push | `{userId, x, y, z}` | From teleport spell only; client applies position directly, bypassing lerp. |
-| `roomTransition` | S→C push | `{roomId, layout, x, y, z}` | Server-initiated (not a `joinRoom` ack): fired when a player walks off the edge of a gridded room's chunk into a neighboring one. Client reloads the room renderer with `layout` and repositions the local player mesh directly (bypassing lerp), same idiom as `playerTeleported`. A fresh `worldItems` for the new room follows immediately after. |
+| `roomTransition` | S→C push | `{roomId, gridX, gridY, layout, x, y, z}` | Server-initiated (not a `joinRoom` ack): fired when a player walks off the edge of a gridded room's chunk into a neighboring one. `gridX`/`gridY` are the new room's grid position, letting the client convert `x/y/z` into its fixed-anchor render frame (`ChunkStreamer.computeOffsetForGrid`) with zero latency - the reposition this produces is a visual no-op, not a jump, since that spot was almost certainly already rendered as a neighbor a moment earlier. A fresh `worldItems` for the new room follows immediately after. |
 
 Player object shape in `gameState`/`fullState`: `{id, userId, username, color, x, y, z, targetX,
 targetZ, isMoving, hitpoints, max_hitpoints, strength}`.
@@ -53,8 +53,8 @@ targetZ, isMoving, hitpoints, max_hitpoints, strength}`.
 
 | Event | Dir | Payload | Notes |
 |---|---|---|---|
-| `chat` | C→S fire | `{message, recipient?}` | No `recipient` → room broadcast; `recipient` (username) → whisper, cross-room. |
-| `chatMessage` | S→C push | `{type: 'room'\|'whisper', senderId, senderName, message, timestamp, recipientId?, recipientName?}` | Room messages via `broadcastToRoom`; whispers sent individually to sender+recipient sockets. |
+| `chat` | C→S fire | `{message, recipient?}` | No `recipient` → nearby-chunk broadcast (see below); `recipient` (username) → whisper, cross-room. |
+| `chatMessage` | S→C push | `{type: 'room'\|'whisper', senderId, senderName, message, timestamp, recipientId?, recipientName?}` | Room messages via `broadcastToNearbyRooms` - the sender's room **and** every gridded room within `PROXIMITY_RADIUS` of it, not a hard single-room wall (matches `gameState`'s visibility scoping); whispers sent individually to sender+recipient sockets regardless of room/proximity. |
 | `chatHistory` | S→C push | array of `chatMessage`-shaped objects | Sent once after login; global regardless of room (see gotcha above). |
 | `getLeaderboard` | C→S ack | `{}` → `{success, leaderboard: [{username, kills, deaths}]}` | Top 10, all rooms combined. |
 
@@ -93,6 +93,31 @@ implicit (`authManager.getUserId(socket.id)`); no room scoping (your inventory f
 | `getItemDefinitions` | `{}` → `{success, items}` | Defined server-side; **no client caller anywhere in the codebase** — dead on the wire today. |
 | `inventoryUpdate` / `equipmentUpdate` / `bankUpdate` / `activeEffectsUpdate` / `consumableUsed` / `worldItems` / `bankClosed` | S→C push | — | Fired after any operation that changes the relevant state; panels also proactively re-request on tab open (see part 1). |
 
+## Animations
+
+Procedural pose data for the client-side character rig (`PoseAnimator.js`) - purely visual, no
+server-side gameplay logic reads this table.
+
+| Event | Dir | Payload → Response | Notes |
+|---|---|---|---|
+| `getAnimations` | C→S ack | `{}` → `{success, animations: [{id, name, category, duration, twoHanded, tracks}]}` | **Not admin-gated** — any logged-in client calls this once on `Game.init()` to populate `PoseAnimator`'s shared registry; falls back to built-in defaults for anything not yet in the DB. |
+| `adminSaveAnimation` | C→S ack | `{adminToken, animation: {id, name, category, duration, twoHanded, tracks}}` → `{success}` or `{success:false, error}` | Upserts by `id`. Used by `editor/AnimationEditorUI.js`; also calls `setAnimationDefinitions` client-side on success for instant effect without waiting for a re-fetch. |
+
+## Event bindings (trigger → animation)
+
+Maps a `GameEvents.js` bus event + actor to an animation, so which pose plays for a trigger is
+data (`event_bindings` table) rather than hardcoded at the call site - see
+[01-client.md](01-client.md)'s `EventAnimationManager`/`AnimationManagerUI` entries and
+[02-server.md](02-server.md)'s Database section. Not admin-gated on read, same reasoning as
+`getAnimations`.
+
+| Event | Dir | Payload → Response | Notes |
+|---|---|---|---|
+| `getEventBindings` | C→S ack | `{}` → `{success, bindings: [{eventName, actor, actionType, animationId, delayMs}]}` | Loaded once on `Game.init()` into `EventAnimationManager`'s shared registry, mirroring `getAnimations`. `animationId`/`delayMs` come from spreading `actionConfig` - only `actionType: 'playAnimation'` exists today. |
+| `adminSaveEventBinding` | C→S ack | `{adminToken, eventName, actor, actionType, actionConfig}` → `{success}` or `{success:false, error}` | Upserts by `(eventName, actor)`. Used by `editor/AnimationManagerUI.js`. |
+| `adminDeleteEventBinding` | C→S ack | `{adminToken, eventName, actor}` → `{success}` or `{success:false, error}` | Removes one `(eventName, actor)` binding - how `AnimationManagerUI` implements "no animation selected" for an actor, not a separate delete button. |
+| `getEventCatalog` | C→S ack | `{}` → `{success, events: [{eventName, category, bindable, sources: [{file, line}]}]}` | Regex-scans the server's own source for emit call sites (`editor/EventCatalogScanner.js`) - reflects reality instead of a hand-maintained list. `category: 'client-bus'`/`bindable: true` = a `GameEvents.emit` call site; `category: 'network'`/`bindable: false` = a plain `socket.emit`/`io.emit`/`io.to(...).emit` call site, shown for reference only. |
+
 ## Notepad
 
 `getNotes` (`{}` → `{success, notes}`) / `saveNotes` (`{notes}` → `{success}`) — both ack-style,
@@ -130,4 +155,11 @@ Every admin event below takes `adminToken` in its payload and is rejected with
 
 `objectInteraction` and `settingChanged` are `window.dispatchEvent` `CustomEvent`s local to the
 client (see part 1) — they never touch the socket, don't confuse them with real server events
-despite similar naming to things like `roomLayoutUpdated`.
+despite similar naming to things like `roomLayoutUpdated`. `combat:attack` and `spell:cast`
+likewise never touch the socket directly - they're `GameEvents.js` bus events, relayed from real
+socket listeners (`combatHit`/`combatMiss`/`spellCast`) and from a purely local trigger
+(`InputManager.finishSpellCast`, which fires for the local caster's own cast since the server never
+echoes `spellCast` back to its own caster meaningfully - see the Combat/Spells tables above). The
+`getEventCatalog` row's "Network reference" group is exactly the real wire events (`combatHit`,
+`gameState`, `chatMessage`, etc.) that have **no** `GameEvents` relay yet, i.e. the wire-level
+mirror of this same "no bindable-trigger counterpart" idea.

@@ -6,6 +6,12 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+const CHUNK_SIZE = 50; // must match Game.js's ground plane / RoomTransitionSystem's CHUNK_HALF_EXTENT*2
+// How many chunks out player visibility/combat/chat reach - a smaller ring than
+// the client's own visual load radius (terrain can be seen further than you can
+// interact with; see ChunkStreamer.js on the client for that separate radius).
+const PROXIMITY_RADIUS = 1;
+
 export class RoomManager {
     constructor(db, statements, io) {
         this.db = db;
@@ -315,6 +321,58 @@ export class RoomManager {
                 this.io.to(socketId).emit(event, data);
             }
         }
+    }
+
+    // Broadcast to `roomId` and every gridded room within PROXIMITY_RADIUS of
+    // it (e.g. chat "radius" instead of a hard single-room wall). Ungridded
+    // rooms have no spatial relationship to compute, so this degrades to the
+    // exact same behavior as broadcastToRoom for them - only the room itself.
+    broadcastToNearbyRooms(roomId, event, data, radius = PROXIMITY_RADIUS) {
+        const room = this.getRoom(roomId);
+        if (!room) return;
+        for (const { room: nearRoom } of this.getRoomsWithinRadius(room, radius)) {
+            this.broadcastToRoom(nearRoom.id, event, data);
+        }
+    }
+
+    // Every gridded room within `radius` chunks (Chebyshev distance) of
+    // `room`, including `room` itself (dx=0,dz=0) - or just `room` alone if
+    // it isn't gridded, since there's no spatial relationship to compute.
+    getRoomsWithinRadius(room, radius = PROXIMITY_RADIUS) {
+        if (!room || room.grid_x === null || room.grid_x === undefined ||
+            room.grid_y === null || room.grid_y === undefined) {
+            return [{ room, dx: 0, dz: 0 }];
+        }
+        const results = [];
+        for (const candidate of this.roomLayouts.values()) {
+            if (candidate.grid_x === null || candidate.grid_x === undefined ||
+                candidate.grid_y === null || candidate.grid_y === undefined) continue;
+            const dx = candidate.grid_x - room.grid_x;
+            const dz = candidate.grid_y - room.grid_y;
+            if (Math.max(Math.abs(dx), Math.abs(dz)) <= radius) {
+                results.push({ room: candidate, dx, dz });
+            }
+        }
+        return results;
+    }
+
+    // World-unit offset to add to a position in `fromRoomId`'s local frame to
+    // express it in `toRoomId`'s local frame, or null if the two rooms have
+    // no computable spatial relationship (either isn't gridded, or one/both
+    // don't exist). Used wherever two entities in different-but-nearby rooms
+    // need to be compared/targeted in a single shared frame (combat range and
+    // chase-target, primarily) - see CombatSystem.js.
+    getFrameOffset(fromRoomId, toRoomId) {
+        if (fromRoomId === toRoomId) return { x: 0, z: 0 };
+        const from = this.getRoom(fromRoomId);
+        const to = this.getRoom(toRoomId);
+        if (!from || !to) return null;
+        if (from.grid_x === null || from.grid_x === undefined || from.grid_y === null || from.grid_y === undefined ||
+            to.grid_x === null || to.grid_x === undefined || to.grid_y === null || to.grid_y === undefined) return null;
+        return {
+            x: (from.grid_x - to.grid_x) * CHUNK_SIZE,
+            z: (from.grid_y - to.grid_y) * CHUNK_SIZE
+        };
     }
 
     // Delete a room (admin only)

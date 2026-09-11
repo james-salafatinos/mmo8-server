@@ -24,9 +24,11 @@ export class ChatManager {
 
             console.log('ChatManager broadcasting room message:', chatMessage);
             
-            // Broadcast only to players in the same room
+            // Broadcast to the room and nearby chunks ("chat radius", not a
+            // hard room wall - matches player visibility scoping, see
+            // RoomManager.broadcastToNearbyRooms)
             if (this.roomManager) {
-                this.roomManager.broadcastToRoom(roomId, 'chatMessage', chatMessage);
+                this.roomManager.broadcastToNearbyRooms(roomId, 'chatMessage', chatMessage);
             } else {
                 // Fallback to global if no roomManager
                 this.io.emit('chatMessage', chatMessage);

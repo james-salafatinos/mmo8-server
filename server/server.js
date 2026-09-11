@@ -30,6 +30,7 @@ import { ChatManager } from './chat/ChatManager.js';
 import { AdminManager } from './editor/AdminManager.js';
 import { RoomManager } from './editor/RoomManager.js';
 import { AssetManager } from './editor/AssetManager.js';
+import { scanEventCatalog } from './editor/EventCatalogScanner.js';
 
 // Get the directory name using ES modules approach
 const __filename = fileURLToPath(import.meta.url);
@@ -59,9 +60,9 @@ chatManager.roomManager = roomManager;
 
 // Initialize ECS World
 const world = new World();
-const networkSystem = new NetworkSystem(io);
+const networkSystem = new NetworkSystem(io, roomManager);
 const persistenceSystem = new PersistenceSystem(db, statements);
-const combatSystem = new CombatSystem(world, io, statements);
+const combatSystem = new CombatSystem(world, io, statements, roomManager);
 const inventorySystem = new InventorySystem(world, statements, io);
 const equipmentSystem = new EquipmentSystem(world, inventorySystem, io);
 const consumableSystem = new ConsumableSystem(world, inventorySystem, equipmentSystem, statements, io);
@@ -378,6 +379,11 @@ io.on('connection', (socket) => {
         
         if (!targetEntityId) {
             console.log('Attack: No targetEntityId found');
+            return;
+        }
+
+        if (targetEntityId === entityId) {
+            console.log('Attack: Ignoring self-attack from userId:', userId);
             return;
         }
 
@@ -1041,6 +1047,106 @@ io.on('connection', (socket) => {
         } catch (err) {
             callback({ success: false, error: err.message });
         }
+    });
+
+    // Get all animation definitions - purely visual pose data, not gameplay state, so any
+    // logged-in client can read it (needed by every client's PoseAnimator, not just admins).
+    socket.on('getAnimations', (data, callback) => {
+        const animations = statements.getAllAnimations.all();
+        callback({
+            success: true,
+            animations: animations.map(a => ({
+                id: a.id,
+                name: a.name,
+                category: a.category,
+                duration: a.duration,
+                twoHanded: !!a.two_handed,
+                tracks: JSON.parse(a.tracks_json)
+            }))
+        });
+    });
+
+    // Create/update an animation definition (admin)
+    socket.on('adminSaveAnimation', (data, callback) => {
+        const { adminToken, animation } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        try {
+            statements.upsertAnimation.run(
+                animation.id,
+                animation.name,
+                animation.category || 'general',
+                animation.duration,
+                animation.twoHanded ? 1 : 0,
+                JSON.stringify(animation.tracks || [])
+            );
+            callback({ success: true });
+        } catch (err) {
+            callback({ success: false, error: err.message });
+        }
+    });
+
+    // Get all event->animation bindings (see EventAnimationManager.js) - same visibility as
+    // getAnimations, since a binding is just as purely-visual as the animation it points to.
+    socket.on('getEventBindings', (data, callback) => {
+        const rows = statements.getAllEventBindings.all();
+        callback({
+            success: true,
+            bindings: rows.map(r => ({
+                eventName: r.event_name,
+                actor: r.actor,
+                actionType: r.action_type,
+                ...JSON.parse(r.action_config_json)
+            }))
+        });
+    });
+
+    // Create/update one event binding (admin) - editor/AnimationManagerUI.js
+    socket.on('adminSaveEventBinding', (data, callback) => {
+        const { adminToken, eventName, actor, actionType, actionConfig } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        try {
+            statements.upsertEventBinding.run(
+                eventName,
+                actor || 'self',
+                actionType || 'playAnimation',
+                JSON.stringify(actionConfig || {})
+            );
+            callback({ success: true });
+        } catch (err) {
+            callback({ success: false, error: err.message });
+        }
+    });
+
+    // Remove one event binding (admin)
+    socket.on('adminDeleteEventBinding', (data, callback) => {
+        const { adminToken, eventName, actor } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        try {
+            statements.deleteEventBinding.run(eventName, actor);
+            callback({ success: true });
+        } catch (err) {
+            callback({ success: false, error: err.message });
+        }
+    });
+
+    // Scan the project's own source for emit call sites (see EventCatalogScanner.js) so the
+    // editor can list every real trigger point instead of a hand-maintained registry. Reflects
+    // source code only, not game state - not admin-gated on read for the same reason
+    // getAnimations isn't.
+    socket.on('getEventCatalog', (data, callback) => {
+        callback({ success: true, events: scanEventCatalog() });
     });
 });
 

@@ -59,31 +59,35 @@ described in its own `isExpired()` method is effectively dead, items are DB-pers
   neighbor is left unclamped on purpose: that's the signal `RoomTransitionSystem` (below) acts on.
   Rooms with no grid position keep the old, unbounded behavior exactly.
 - **RoomTransitionSystem** — for gridded rooms only, hands the player off to the neighboring chunk
-  once they're within `TRIGGER_MARGIN` (1.5 units) of an edge that has a neighbor, **not** only once
-  `MovementSystem` lets a `Transform` strictly pass ±25. Click-to-move is the only movement input,
-  and `InputManager` clamps every click target to at most exactly ±25 (the raycast can't return a
-  point past the ground plane's own edge either) — requiring a strict overshoot past 25 made
-  crossing a boundary nearly unclickable in real play, since a target can basically never exceed it.
-  Lands the crossed axis at least `LANDING_INSET` (2 units — deliberately more than `TRIGGER_MARGIN`)
-  past the neighbor's near edge, never exactly on it, and only carries an in-flight `Movement`
-  target across the one-chunk-width shift if that *target itself* genuinely clears the true edge —
-  not merely because the current position triggered early. Getting either of those wrong caused a
-  real, confirmed-live bug: landing exactly on the border put the player right back inside the
-  neighbor's own trigger margin for that same edge, and shifting a target that never intended to
-  leave the room re-expressed it as a *backward*-pointing value in the neighbor's frame — either one
-  alone is enough to send the player walking straight back and re-trigger the same early crossing,
-  forever (an infinite same-tick room-A/room-B ping-pong, visible as rapid `joined`/`left` Socket.IO
-  room logging). Preserves the *other* axis untouched (the lateral offset along the shared border).
-  Reuses `RoomManager.joinRoom(socketId, roomId, userId)` for the Socket.IO room swap + `roomId`
+  once `MovementSystem` lets a `Transform` genuinely pass ±25 (`x/z > 25` or `< -25`, strictly) —
+  **not** early, within some margin of the edge. An earlier version triggered within a `TRIGGER_MARGIN`
+  of the edge because `InputManager` used to clamp every click target to at most exactly ±25, making a
+  strict overshoot nearly unclickable; that clamp is gone now (see [01-client.md](01-client.md)'s
+  `ChunkStreamer`/neighbor-click entry — a click on a visually-stitched neighbor chunk produces a
+  target well past ±25 directly), so requiring real overshoot is both achievable and exact. Lands the
+  crossed axis with a **pure one-chunk-width coordinate shift** (`transform.x/z += ∓50`) — not a snap to
+  some fixed inset — so the player's world-space position is mathematically unchanged across the
+  crossing, only which room's local frame describes it; this is what makes it actually invisible on
+  screen (a fixed-inset landing spot, tried first, produced a visible multi-unit hop every crossing,
+  confirmed live with a frame-by-frame position log — see git history). This is safe from
+  re-triggering back immediately (the failure mode a fixed inset was originally added to prevent)
+  specifically *because* the trigger now only fires on true overshoot: the overshoot ever being carried
+  across is at most one tick's worth of movement (a few hundredths of a unit at normal speed), so the
+  shifted position always lands just past the neighbor's near edge, nowhere near its own far edge.
+  Carries an in-flight `Movement` target across the same shift whenever one exists — always safe now,
+  since `MovementSystem` never lets a `Transform` advance past its own `Movement` target, so a target
+  past the true edge is implied by the crossing having fired at all. Preserves the *other* axis
+  untouched (the lateral offset along the shared border). Reuses
+  `RoomManager.joinRoom(socketId, roomId, userId)` for the Socket.IO room swap + `roomId`
   persistence (the same method the `joinRoom` socket handler calls), then pushes `roomTransition`
-  + a fresh `worldItems` to just that one socket — see [03-communication.md](03-communication.md).
-  Does not fire `playerJoined`/`playerLeft` on a chunk crossing, matching the existing `joinRoom`
-  handler's behavior on a room switch (only login broadcasts `playerJoined`). Does **not** render or
-  preload anything from the neighboring chunk before the crossing — the swap is an instant hard cut
-  (new `roomRenderer.loadRoom` call, camera and player mesh snap directly to the new position), not
-  a seamless walk into visible neighboring terrain. There is currently no visual stitching of
-  adjacent chunks at all; that was an explicit, deliberate scope cut (see CLAUDE.md/PR history) in
-  favor of shipping working chunk transitions first.
+  (carrying `gridX`/`gridY` too, for the client's offset math - see below) + a fresh
+  `worldItems` to just that one socket — see [03-communication.md](03-communication.md). Does not
+  fire `playerJoined`/`playerLeft` on a chunk crossing, matching the existing `joinRoom` handler's
+  behavior on a room switch (only login broadcasts `playerJoined`). The server side of a crossing is
+  a plain `roomId`/`Transform` swap exactly as before - it's the **client** that makes it look
+  seamless (no camera snap, no visible reload) by never re-centering its render frame on "whichever
+  room is current"; see [01-client.md](01-client.md)'s `ChunkStreamer` entry for the fixed-anchor
+  scheme this payload feeds.
 - **CombatSystem** — 1.5-unit attack range, 1s cooldown, 50% hit chance, damage = effective
   strength − ⌊effective defense/2⌋ (min 1). Recomputes "effective" strength/defense **inline**
   from `combat.strength + equipment.bonusAttack + activeEffects.getStrengthBonus()` on every
@@ -95,7 +99,16 @@ described in its own `isExpired()` method is effectively dead, items are DB-pers
   the same tick, not the next one**: `update()` snapshots every entity into one flat array before
   looping, so when an attack triggers `startCombat()` on the defender, the defender's own attack
   (cooldown starts at 0) gets processed later in that *same* pass if it comes after the attacker
-  in entity-insertion order. Covered by `CombatSystem.test.js`.
+  in entity-insertion order. Covered by `CombatSystem.test.js`. **Cross-room combat is intentional,
+  not the old accidental gap** (see below): takes an optional `roomManager` and, when attacker and
+  target are in different rooms, converts the target's position into the attacker's own local frame
+  via `roomManager.getFrameOffset(targetRoomId, attackerRoomId)` before comparing distance or
+  setting a chase target - the same conversion `RoomTransitionSystem` uses, so an attacker set to
+  chase a target in an adjacent chunk walks toward the shared border and crosses it exactly like an
+  ordinary click-to-move would. If the two rooms have no computable relationship (different
+  ungridded rooms, `getFrameOffset` returns `null`), combat is abandoned rather than comparing two
+  unrelated coordinate spaces. Same-room combat is resolved without needing `roomManager` at all
+  (tests construct this system without one).
 - **EquipmentSystem** — equip/unequip with inventory swap, recalculates bonuses; its `update()`
   also expires `ActiveEffects` every tick for every player (effect expiry isn't its own system).
 - **ConsumableSystem** — heal/strength_boost/defense_boost effects; DB cleanup of expired effects
@@ -104,29 +117,45 @@ described in its own `isExpired()` method is effectively dead, items are DB-pers
   see above). `update()` only prunes orphaned entities, does not despawn on a timer.
 - **BankSystem** — session tracked per-socket (`activeBankSessions`), re-validates proximity
   (5-unit range) every tick and force-closes with `bankClosed` if the player wandered off.
-- **NetworkSystem** — broadcasts `gameState` **per room** at 20 Hz (50ms throttle inside the 60Hz
-  loop), grouping online players by `player.roomId`; `sendFullState()` is called directly by
-  `server.js` on login/room-join, not part of the tick loop.
+- **NetworkSystem** — broadcasts `gameState` at 20 Hz (50ms throttle inside the 60Hz loop); groups
+  online players by `player.roomId` once per tick, then for each *occupied* room asks
+  `roomManager.getRoomsWithinRadius(room)` (default radius 1 - the immediate 8-neighbor ring, see
+  `RoomManager` below) which other rooms count as "nearby", and sends every player from that whole
+  set - not just the exact room - shifted into the receiving room's own local frame (each nearby
+  room contributes a `(dx, dz)` chunk offset, multiplied by the 50-unit chunk size and added to
+  `x`/`z`/`targetX`/`targetZ`). This is computed once per occupied room and reused for every player
+  in it (they all see the identical nearby set at the identical offsets), not once per player.
+  Ungridded rooms fall back to the old exact-room-only behavior automatically, since
+  `getRoomsWithinRadius` on one returns just itself. `sendFullState()` applies the same
+  proximity+offset logic and is called directly by `server.js` on login/room-join, not part of the
+  tick loop.
 - **PersistenceSystem** — autosaves all players (position + inventory + equipment) every 5s in
   one DB transaction; `savePlayer(userId)` is also called directly on disconnect for an immediate
   single-player save.
 
-## Cross-room scoping is inconsistent — read before touching combat/chat
+## Cross-room/proximity scoping — what's intentional vs. still inconsistent
 
-Rooms (`RoomManager`) gate *movement rendering* (`gameState`/`fullState` are room-filtered) but
-**not** combat or spells: the `attack` and `castSpell` handlers in `server.js` resolve
-`targetEntityId` from the global `playerEntities` map with no room check, so a player can attack
-or spell-cast a target in a different room. Once a fight starts, notification scoping is also
-inconsistent: `combatHit`/`combatMiss` are emitted **only to the two sockets involved** (not the
-room), `spellHit`/`spellHeal`/`spellCast` are broadcast to the **caster's whole room**, and
+`gameState`/`fullState` (`NetworkSystem`) and room chat (`ChatManager.sendRoomMessage` →
+`RoomManager.broadcastToNearbyRooms`) are both **intentionally** proximity-scoped: a gridded room's
+"audience" is itself plus every gridded room within `RoomManager`'s `PROXIMITY_RADIUS` (1 chunk),
+not just an exact `roomId` match - the design goal being that players near a shared chunk border can
+see, chat with, and fight each other, matching an open-world feel rather than hard per-instance
+walls. `attack`/`castSpell` handlers in `server.js` still resolve `targetEntityId` from the global
+`playerEntities` map with **no explicit proximity check of their own** - that's fine for `attack`
+now that `CombatSystem` itself is cross-room-aware (see above) and simply gives up on an
+unreachable target, but `castSpell`'s damage/heal paths don't go through `CombatSystem` and so
+don't get that same conversion; a cross-room spell cast is untested territory. Once a fight starts,
+notification scoping is inconsistent in ways proximity-scoping didn't touch: `combatHit`/
+`combatMiss` are emitted **only to the two sockets involved** (not broadcast at all), `spellHit`/
+`spellHeal`/`spellCast` are broadcast to the **caster's own room only** (not nearby rooms), and
 `playerDied`/`playerRespawned` are broadcast **globally to every connected socket regardless of
-room** (`io.emit`, not `roomManager.broadcastToRoom`). If you're chasing a "why didn't bystanders
-see that hit/death" bug, this is why.
+room** (`io.emit`, not `roomManager.broadcastToRoom`/`broadcastToNearbyRooms`). If you're chasing a
+"why didn't a bystander in the next chunk see that hit" bug, this is why.
 
 `ChatManager.getRecentMessages(limit, roomId)` accepts a `roomId` param and is called as if
 room-filtered on login, but the query it runs (`getRecentGlobalMessages`) **ignores `roomId`
 entirely** — every player gets the same global chat history regardless of current room, despite
-live chat messages themselves being correctly room-scoped via `broadcastToRoom`.
+live chat messages themselves being correctly proximity-scoped via `broadcastToNearbyRooms`.
 
 ## Item pickup: two unrelated systems, confusingly-named events
 
@@ -161,6 +190,15 @@ existing socket for a userId on login/tokenLogin unless using `force`/`forceLogi
   keyed by `file:<category>/<filename>`; directory name becomes the palette category
   ("Uncategorized" if scanned from the assets root). Plus hardcoded `primitive:*` and `marker:*`
   entries. `refreshAssets` socket event re-scans at runtime.
+- **EventCatalogScanner** (`editor/EventCatalogScanner.js`) — same idea as `AssetManager`'s
+  directory walk, but regex over `.js` source instead of asset files: finds every `.emit(...)` call
+  site under `server/`/`client/js/` so `getEventCatalog` can hand the Animation Manager editor a
+  live list instead of a hand-maintained one (see [01-client.md](01-client.md)'s
+  `AnimationManagerUI` entry for the bindable-vs-reference distinction it draws from
+  `GameEvents.emit` vs plain socket/io `.emit`). Skips `__fixtures__` dirs and `*.test.js` files so
+  its own test fixtures don't leak into the real catalog. Purely textual — no real JS parsing —
+  so it's fooled by source text that merely *resembles* a call site (see the gotcha noted in
+  01-client.md); accept that limitation rather than reaching for a real parser here.
 - **RoomManager** — in-memory cache (`Map<roomId, layout>`) hydrated from `room_layouts` at boot;
   all reads/writes go through the cache, DB is write-through. Validates object/marker counts
   (500/50 caps) on publish but does **not** validate `assetId` actually exists in `AssetManager`.
@@ -170,6 +208,19 @@ existing socket for a userId on login/tokenLogin unless using `force`/`forceLogi
   world z. `joinRoom(socketId, roomId, userId?)` optionally persists `current_room_id` when a
   `userId` is passed, so both the `joinRoom` socket handler and `RoomTransitionSystem` share one
   persistence path instead of each doing their own `statements.updatePlayerRoom` call.
+  `PROXIMITY_RADIUS` (module const, 1) is the shared "how many chunks out" answer for player
+  visibility/combat/chat - separate from, and smaller than, the client's own visual load radius
+  (2 chunks, see `ChunkStreamer` in [01-client.md](01-client.md), since terrain can be seen further
+  than you can meaningfully interact with). `getRoomsWithinRadius(room, radius?)` is the one method
+  everything else builds on: every gridded room within Chebyshev distance `radius` of `room`,
+  itself included at `{dx:0, dz:0}` - or just `room` alone (no shift) if it isn't gridded, which is
+  what makes ungridded rooms automatically fall back to the pre-proximity exact-match-only behavior
+  everywhere this is used. `getFrameOffset(fromRoomId, toRoomId)` is the pairwise version - the
+  world-unit `{x, z}` to add to a position in `fromRoomId`'s local frame to express it in
+  `toRoomId`'s frame, or `null` if either room isn't gridded (same-room short-circuits to `{x:0,
+  z:0}` without touching grid data at all). `broadcastToNearbyRooms(roomId, event, data, radius?)`
+  is `broadcastToRoom` fanned out across `getRoomsWithinRadius`'s result - what `ChatManager` uses
+  instead of a hard single-room `broadcastToRoom` call.
 
 ## Database (`database/schema.js`)
 
@@ -179,7 +230,18 @@ bolted on via runtime `ALTER TABLE ... IF NOT EXISTS`-style migrations checked a
 the terrain grid", the pre-existing default for every room), `room_layouts` (JSON blobs for
 objects/spawnPoints/markers, versioned), `items` (static definitions, seeded once if empty — see
 `seedItems()` for the full starter set), `player_inventory` (28 slots), `player_bank` (200 slots),
-`player_equipment` (5 slots), `active_effects`, `world_items`. A unique index on
+`player_equipment` (5 slots), `active_effects`, `world_items`, `animations` (procedural pose data
+for the client-side character rig — `id`/`name`/`category`/`duration`/`two_handed`/`tracks_json`,
+seeded once via `seedAnimations()` with the `attack`/`cast` definitions; purely visual, nothing
+server-side reads it, see [01-client.md](01-client.md)'s `PoseAnimator` entry and
+[03-communication.md](03-communication.md)'s `getAnimations`/`adminSaveAnimation` rows),
+`event_bindings` (maps a client trigger to an action — `event_name`/`actor`/`action_type`/
+`action_config_json`, unique on `(event_name, actor)`; only `action_type = 'playAnimation'` exists
+today, `action_config_json` holding `{animationId, delayMs}`, kept as JSON rather than dedicated
+columns specifically so a future action type doesn't need a schema change; seeded once via
+`seedEventBindings()` to match the pre-existing hardcoded `combat:attack`→`attack`/`spell:cast`→
+`cast` behavior — see [01-client.md](01-client.md)'s `EventAnimationManager`/`AnimationManagerUI`
+entries and [03-communication.md](03-communication.md)'s `getEventBindings` row). A unique index on
 `rooms(grid_x, grid_y)` stops two rooms occupying the same chunk cell — SQLite treats every `NULL`
 as distinct, so any number of ungridded rooms coexist fine. All migrations are additive and
 idempotent (checked via `PRAGMA table_info` before altering) — safe to add another one following

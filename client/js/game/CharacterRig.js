@@ -95,13 +95,17 @@ export function createCharacterRig() {
     hips.position.y = legTotal;
     visual.add(hips);
 
+    // Independent bend/twist joint at the waist - no ambient motion of its own (unlike
+    // chestPivot's idle sway below), purely there for action tracks to drive (a bow, a twist).
+    const waistPivot = new THREE.Object3D();
+    hips.add(waistPivot);
     const waistMesh = mesh(geo.waist, torsoMat);
     waistMesh.position.y = waistT / 2;
-    hips.add(waistMesh);
+    waistPivot.add(waistMesh);
 
     const chestPivot = new THREE.Object3D();
     chestPivot.position.y = waistT * 0.72;
-    hips.add(chestPivot);
+    waistPivot.add(chestPivot);
     const chestMesh = mesh(geo.chest, torsoMat);
     chestMesh.position.y = chestT / 2;
     chestPivot.add(chestMesh);
@@ -147,5 +151,5 @@ export function createCharacterRig() {
         leg.endPoint.add(foot);
     }
 
-    return { root, legTotal, hips, chestPivot, armL, armR, legL, legR };
+    return { root, legTotal, hips, waistPivot, chestPivot, headPivot, armL, armR, legL, legR };
 }

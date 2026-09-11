@@ -57,7 +57,9 @@ networkManager.onLogin(async (userData) => {
 
     // Initialize room renderer
     roomRenderer = new RoomRenderer(game.scene);
-    chunkStreamer = new ChunkStreamer(networkManager, roomRenderer);
+    chunkStreamer = new ChunkStreamer(networkManager, roomRenderer, game.playerManager, game);
+    game.roomRenderer = roomRenderer; // Link for InputManager's neighbor-aware click-to-move
+    game.chunkStreamer = chunkStreamer; // Link for InputManager's world-to-local coordinate conversion
 
     // Initialize editor manager and UI
     editorManager = new EditorManager(game, networkManager);
@@ -113,15 +115,64 @@ networkManager.onLogin(async (userData) => {
         }
     });
 
-    // Handle walking across a chunk boundary into an adjacent room - unlike
-    // roomChanged (client-initiated joinRoom), this is server-pushed, so it
-    // also has to reposition the local player mesh itself (bypassing lerp,
-    // same idiom as playerTeleported).
+    // Handle walking across a chunk boundary into an adjacent room. Unlike
+    // roomChanged (a dropdown-driven joinRoom, which can jump to any room and
+    // is expected to look like a hard cut), this is a server-pushed crossing
+    // that must be invisible: the room being entered was almost certainly
+    // already rendered as a neighbor at exactly the right spot (see
+    // ChunkStreamer's fixed-anchor scheme), so this only swaps which
+    // already-loaded mesh set is "current" vs. "neighbor" (RoomRenderer's
+    // promoteNeighborToCurrent/demoteCurrentToNeighbor) - it must never
+    // dispose and reload anything, or every crossing pops/flashes the whole
+    // visible chunk radius.
     networkManager.socket.on('roomTransition', (data) => {
+        if (!chunkStreamer) return;
+
+        // Compute the offset synchronously (no network round-trip) so the
+        // reposition below happens with zero latency - waiting on the fuller
+        // refresh()'s round-trips would show a stale position for a frame
+        // or two.
+        const offset = chunkStreamer.computeOffsetForGrid(data.gridX, data.gridY);
+
+        // Capture the room being LEFT (id + its own offset) before
+        // applyCurrentOffset below overwrites RoomRenderer.currentRoomOffset
+        // with the new room's value - needed to demote it into a neighbor
+        // afterward without losing track of where it was rendered.
+        const oldRoomId = roomRenderer ? roomRenderer.currentRoomId : null;
+        const oldOffset = roomRenderer ? { ...roomRenderer.currentRoomOffset } : null;
+
+        chunkStreamer.applyCurrentOffset(offset);
+
         if (roomRenderer && data.layout) {
-            roomRenderer.loadRoom(data.roomId, data.layout);
-            chunkStreamer.refresh(data.roomId);
+            // Swap already-loaded meshes between "current" and "neighbor"
+            // status instead of disposing and reloading anything - both
+            // rooms were already fully rendered a moment ago (this one as
+            // the neighbor being entered, the old one as the current room),
+            // so nothing here should cause a pop/flash or async GLB re-fetch.
+            if (oldRoomId !== null && oldRoomId !== data.roomId) {
+                roomRenderer.demoteCurrentToNeighbor(oldRoomId, oldOffset.x, oldOffset.z);
+            }
+            const promoted = roomRenderer.promoteNeighborToCurrent(data.roomId);
+            if (!promoted) {
+                // Wasn't preloaded as a neighbor yet (e.g. a very fast
+                // double-crossing) - fall back to a full rebuild.
+                roomRenderer.loadRoom(data.roomId, data.layout);
+            }
         }
+
+        // Deliberately NOT repositioning the local player's own mesh here.
+        // chunkStreamer.applyCurrentOffset above already updated
+        // playerManager's renderOffset, and the crossing itself leaves the
+        // player's world-space position mathematically unchanged (see
+        // RoomTransitionSystem.transition on the server) - so the mesh is
+        // already sitting at a valid on-screen spot in the new frame,
+        // mid-lerp exactly as it was a moment ago. A hard mesh.position.set
+        // here used to "snap" it to the zero-lag target, erasing that lerp
+        // lag in one frame - a real, camera-visible teleport on every
+        // crossing (worse with a static camera, nothing else masks it).
+        // The next gameState tick naturally continues the same lerp toward
+        // a targetPos computed with the new offset, with no discontinuity.
+
         // Keep the HUD (and, if open, editor toolbar) room dropdown in sync -
         // this is a server push, not a dropdown-initiated joinRoom, so
         // nothing else updates their displayed value.
@@ -129,16 +180,12 @@ networkManager.onLogin(async (userData) => {
         if (hudDropdown) hudDropdown.value = data.roomId;
         const editorDropdown = document.getElementById('editor-room-select');
         if (editorDropdown) editorDropdown.value = data.roomId;
-        if (game && game.playerManager) {
-            const userId = userData.user.id;
-            const player = game.playerManager.players.get(userId)
-                        || game.playerManager.players.get(Number(userId))
-                        || game.playerManager.players.get(String(userId));
-            if (player) {
-                player.mesh.position.set(data.x, data.y, data.z);
-                player.targetPos.set(data.x, data.y, data.z);
-            }
-        }
+
+        // Full neighbor-set refresh (async) - loads whatever's newly in range
+        // and unloads whatever fell out of it. The immediate steps above
+        // already made the crossing itself look seamless; this just catches
+        // the visible neighbor set up afterward.
+        chunkStreamer.refresh(data.roomId);
     });
 
     // Join saved room (or default) - use skipSpawn to preserve saved position on re-login

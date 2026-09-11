@@ -911,6 +911,368 @@ body.editor-mode #game-ui-dock {
     border-color: #667eea;
 }
 
+/* Animation Editor */
+.anim-editor-content {
+    width: 1400px;
+    max-width: 96vw;
+    max-height: 92vh;
+    overflow-y: auto;
+    text-align: left;
+}
+
+.anim-editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.anim-editor-header h3 {
+    margin: 0;
+}
+
+.anim-editor-top-row {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+
+.anim-editor-list-col {
+    width: 200px;
+    flex-shrink: 0;
+}
+
+.anim-list {
+    max-height: 260px;
+    overflow-y: auto;
+    margin-top: 8px;
+}
+
+.anim-list-entry {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 10px;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.anim-list-entry:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.anim-list-entry.selected {
+    background: rgba(102, 126, 234, 0.3);
+}
+
+.anim-category {
+    color: #888;
+    font-size: 0.8rem;
+}
+
+.anim-editor-preview-col {
+    flex-shrink: 0;
+}
+
+#anim-preview-canvas {
+    width: 340px;
+    height: 340px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.anim-preview-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.anim-preview-status {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.85rem;
+}
+
+.anim-editor-meta-col {
+    flex: 1 1 260px;
+    min-width: 240px;
+}
+
+.anim-editor-meta-col .form-row {
+    margin-bottom: 8px;
+}
+
+/* Tracks laid out in three columns mirroring the body: left limbs / head+waist / right limbs -
+   rather than one long alphabetical-ish list - so editing "the left arm" means looking at the
+   left column, not scanning past unrelated joints. */
+.anim-tracks-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+    margin: 16px 0;
+    padding-top: 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.anim-track-column {
+    min-width: 0;
+}
+
+.anim-track-block {
+    margin-bottom: 12px;
+}
+
+.anim-track-label {
+    font-size: 0.8rem;
+    color: #ccc;
+    margin-bottom: 4px;
+}
+
+.anim-track-group-header {
+    color: #fff;
+    font-size: 0.9rem;
+    font-weight: bold;
+    margin: 16px 0 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.anim-track-column .anim-track-group-header:first-child {
+    margin-top: 0;
+}
+
+.anim-keyframe-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: #aaa;
+    flex-wrap: wrap;
+}
+
+.kf-field {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1 1 auto;
+    min-width: 130px;
+}
+
+.kf-field label {
+    width: 32px;
+    flex-shrink: 0;
+}
+
+.anim-keyframe-row input[type="range"] {
+    flex: 1;
+    min-width: 50px;
+}
+
+.anim-keyframe-row input[type="number"] {
+    width: 56px;
+    padding: 3px 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    color: #fff;
+}
+
+.kf-row-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.anim-scrub-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 0.85rem;
+    color: #ccc;
+}
+
+.anim-scrub-row input[type="range"] {
+    flex: 1;
+}
+
+.anim-editor-footer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.anim-save-status {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+/* Animation Manager (event -> animation bindings) */
+.anim-mgr-content {
+    width: 920px;
+    max-width: 96vw;
+    max-height: 88vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+    padding: 0;
+}
+
+.anim-mgr-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 18px 22px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.anim-mgr-header h3 {
+    margin: 0;
+}
+
+.anim-mgr-body {
+    display: grid;
+    grid-template-columns: 270px 1fr;
+    height: min(70vh, 600px); /* a definite height, not min/max-height, so the grid actually
+                                  constrains its children instead of growing to fit their content
+                                  (min-height previously fought max-height on a short viewport) */
+}
+
+.anim-mgr-list {
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 12px 8px;
+    overflow-y: auto;
+    min-height: 0; /* grid items default to min-height:auto (sizes to content), which defeats the grid's max-height and stops this from ever scrolling */
+}
+
+.anim-mgr-group-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.4);
+    padding: 10px 8px 6px;
+}
+
+.anim-mgr-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    margin-bottom: 2px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.anim-mgr-row:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.anim-mgr-row.selected {
+    background: rgba(102, 126, 234, 0.3);
+    border: 1px solid #667eea;
+}
+
+.anim-mgr-row.reference {
+    opacity: 0.65;
+}
+
+.anim-mgr-row-name {
+    font-family: 'Consolas', monospace;
+    font-size: 0.8rem;
+}
+
+.anim-mgr-row-summary {
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.anim-mgr-detail {
+    padding: 20px 24px;
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.anim-mgr-placeholder {
+    color: rgba(255, 255, 255, 0.5);
+    text-align: center;
+    margin-top: 30px;
+}
+
+.anim-mgr-eyebrow {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+.anim-mgr-event-name {
+    font-family: 'Consolas', monospace;
+    margin: 6px 0 10px;
+    font-size: 1.15rem;
+}
+
+.anim-mgr-info {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.75);
+    line-height: 1.6;
+    max-width: 56ch;
+}
+
+.anim-mgr-info code {
+    font-family: 'Consolas', monospace;
+    font-size: 0.8rem;
+    color: #a8b8ff;
+    background: rgba(102, 126, 234, 0.15);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+
+.anim-mgr-sources {
+    margin: 10px 0 16px;
+    font-family: 'Consolas', monospace;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+.anim-mgr-actor-forms {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.anim-mgr-actor-form {
+    padding-top: 14px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    max-width: 340px;
+}
+
+.anim-mgr-actor-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #a8b8ff;
+    margin-bottom: 8px;
+}
+
+.anim-mgr-delay-row input {
+    width: 100px;
+}
+
+.anim-mgr-save-status {
+    margin-left: 10px;
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
 .terrain-cell-input {
     width: 100%;
     padding: 4px;

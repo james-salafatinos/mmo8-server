@@ -146,6 +146,43 @@ export function initializeDatabase(db) {
         )
     `);
 
+    // Animations table - procedural pose data for the client-side character rig (PoseAnimator).
+    // Purely visual: nothing server-side reads this, it's stored/served so every client sees
+    // the same tuning and an admin can edit it without a code deploy. `tracks_json` is an array
+    // of {path, keyframes:[{t, value}]}; `path` is "<armL|armR>.<upper|mid>.<x|z>" - see
+    // client/js/game/PoseAnimator.js for how a track is sampled and blended in/out of the live
+    // walk/idle pose.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS animations (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            category TEXT DEFAULT 'general',
+            duration REAL NOT NULL,
+            two_handed INTEGER DEFAULT 0,
+            tracks_json TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+
+    // Event bindings table - maps a client-side trigger (see client/js/game/GameEvents.js) to an
+    // action to run when it fires. `action_config_json` holds fields specific to `action_type`
+    // (only 'playAnimation' exists today: {animationId, delayMs}) rather than dedicated columns,
+    // so a future action type (e.g. emitting a new network event) doesn't need a schema change.
+    // `actor` says which participant in the event's payload the action applies to (e.g.
+    // 'attacker' vs 'defender' for combat:attack) - see EventAnimationManager.js's resolution
+    // convention. One binding per (event_name, actor) pair.
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS event_bindings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_name TEXT NOT NULL,
+            actor TEXT NOT NULL DEFAULT 'self',
+            action_type TEXT NOT NULL DEFAULT 'playAnimation',
+            action_config_json TEXT NOT NULL DEFAULT '{}',
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(event_name, actor)
+        )
+    `);
+
     // Player inventory table - 28 slots per player
     db.exec(`
         CREATE TABLE IF NOT EXISTS player_inventory (
@@ -254,6 +291,12 @@ export function initializeDatabase(db) {
     // Seed initial items if none exist
     seedItems(db);
 
+    // Seed initial animation definitions if none exist
+    seedAnimations(db);
+
+    // Seed initial event->animation bindings if none exist
+    seedEventBindings(db);
+
     console.log('Database schema initialized');
 }
 
@@ -298,6 +341,62 @@ function seedItems(db) {
         console.log('Seeded initial items');
     } catch (err) {
         console.error('Error seeding items:', err);
+    }
+}
+
+// Seed initial animation definitions - same poses PoseAnimator.js originally had hardcoded.
+// Keyframes only need to cover the "interesting" middle of the motion; the player blends in
+// from and back out to whatever the live walk/idle pose is at trigger time automatically.
+function seedAnimations(db) {
+    try {
+        const count = db.prepare("SELECT COUNT(*) as count FROM animations").get();
+        if (count.count > 0) return;
+
+        const insert = db.prepare(`
+            INSERT INTO animations (id, name, category, duration, two_handed, tracks_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `);
+
+        insert.run('attack', 'Sword Attack', 'combat', 0.45, 0, JSON.stringify([
+            { path: 'armR.upper.x', keyframes: [{ t: 0.5, value: -1.7 }] },
+            { path: 'armR.upper.z', keyframes: [{ t: 0.5, value: -0.35 }] },
+            { path: 'armR.mid.x', keyframes: [{ t: 0.5, value: 0 }] },
+        ]));
+
+        insert.run('cast', 'Spell Cast', 'magic', 1.0, 1, JSON.stringify([
+            { path: 'armR.upper.x', keyframes: [{ t: 0.25, value: -1.1 }, { t: 0.8, value: -1.1 }] },
+            { path: 'armR.upper.z', keyframes: [{ t: 0.25, value: 0.05 }, { t: 0.8, value: 0.05 }] },
+            { path: 'armR.mid.x', keyframes: [{ t: 0.25, value: -0.05 }, { t: 0.8, value: -0.05 }] },
+            { path: 'armL.upper.x', keyframes: [{ t: 0.25, value: -0.935 }, { t: 0.8, value: -0.935 }] },
+            { path: 'armL.upper.z', keyframes: [{ t: 0.25, value: -0.06 }, { t: 0.8, value: -0.06 }] },
+            { path: 'armL.mid.x', keyframes: [{ t: 0.25, value: -0.035 }, { t: 0.8, value: -0.035 }] },
+        ]));
+
+        console.log('Seeded initial animations');
+    } catch (err) {
+        console.error('Error seeding animations:', err);
+    }
+}
+
+// Seed initial event->animation bindings - matches the animations every rig already played
+// before this system existed (see client/js/game/Game.js's/InputManager.js's GameEvents.emit
+// call sites), so introducing the table changes nothing about default behavior.
+function seedEventBindings(db) {
+    try {
+        const count = db.prepare("SELECT COUNT(*) as count FROM event_bindings").get();
+        if (count.count > 0) return;
+
+        const insert = db.prepare(`
+            INSERT INTO event_bindings (event_name, actor, action_type, action_config_json)
+            VALUES (?, ?, ?, ?)
+        `);
+
+        insert.run('combat:attack', 'attacker', 'playAnimation', JSON.stringify({ animationId: 'attack', delayMs: 0 }));
+        insert.run('spell:cast', 'caster', 'playAnimation', JSON.stringify({ animationId: 'cast', delayMs: 0 }));
+
+        console.log('Seeded initial event bindings');
+    } catch (err) {
+        console.error('Error seeding event bindings:', err);
     }
 }
 
@@ -481,6 +580,29 @@ export function createStatements(db) {
 
         // Notes operations (notepad persistence)
         getNotes: db.prepare(`SELECT notes FROM player_state WHERE user_id = ?`),
-        saveNotes: db.prepare(`UPDATE player_state SET notes = ? WHERE user_id = ?`)
+        saveNotes: db.prepare(`UPDATE player_state SET notes = ? WHERE user_id = ?`),
+
+        // Animation operations (procedural pose data, see PoseAnimator.js)
+        getAllAnimations: db.prepare(`SELECT * FROM animations ORDER BY category, id`),
+        upsertAnimation: db.prepare(`
+            INSERT INTO animations (id, name, category, duration, two_handed, tracks_json, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name, category = excluded.category, duration = excluded.duration,
+                two_handed = excluded.two_handed, tracks_json = excluded.tracks_json,
+                updated_at = CURRENT_TIMESTAMP
+        `),
+
+        // Event binding operations (see client/js/game/EventAnimationManager.js /
+        // editor/AnimationManagerUI.js)
+        getAllEventBindings: db.prepare(`SELECT * FROM event_bindings ORDER BY event_name, actor`),
+        upsertEventBinding: db.prepare(`
+            INSERT INTO event_bindings (event_name, actor, action_type, action_config_json, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(event_name, actor) DO UPDATE SET
+                action_type = excluded.action_type, action_config_json = excluded.action_config_json,
+                updated_at = CURRENT_TIMESTAMP
+        `),
+        deleteEventBinding: db.prepare(`DELETE FROM event_bindings WHERE event_name = ? AND actor = ?`)
     };
 }
