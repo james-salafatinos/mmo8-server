@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Character Prototype</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1f24; font-family: sans-serif; }
+  #ui {
+    position: fixed; top: 12px; left: 12px; z-index: 10;
+    background: rgba(20,22,26,0.85); color: #e8e8e8; padding: 12px 16px;
+    border-radius: 8px; font-size: 13px; line-height: 1.5;
+  }
+  #ui label { display: block; cursor: pointer; }
+  #ui b { color: #9fd3ff; }
+  #ui .hint { opacity: 0.7; margin-top: 6px; }
+  #ui .row { display: flex; gap: 10px; margin-top: 4px; }
+  #ui select { background: #2a2f36; color: #e8e8e8; border: 1px solid #444; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div><b>WASD</b> move</div>
+  <div><b>Space</b> attack (sword) &middot; <b>1</b> mine (pickaxe) &middot; <b>2</b> chop (axe) &middot; <b>3</b> cast (staff)</div>
+  <div class="row">
+    <label>Tool: <select id="sel-tool">
+      <option value="none">None</option>
+      <option value="sword" selected>Sword</option>
+      <option value="pickaxe">Pickaxe</option>
+      <option value="axe">Axe</option>
+      <option value="staff">Staff</option>
+    </select></label>
+  </div>
+  <label><input type="checkbox" id="cb-helmet" checked> Helmet</label>
+  <label><input type="checkbox" id="cb-shield" checked> Shield</label>
+  <label><input type="checkbox" id="cb-legs" checked> Leg armor</label>
+  <div class="hint">All motion below is computed live from math (eased keyframe blends),<br>no keyframe clips or skinned mesh.</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- Scene setup ----------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b1f24);
+
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(2.3, 1.9, 2.9);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.7, 0);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0xcfe8ff, 0x30271c, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 1.1);
+sun.position.set(3, 5, 2);
+scene.add(sun);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(20, 20),
+  new THREE.MeshStandardMaterial({ color: 0x2a2f36, roughness: 1 })
+);
+ground.rotation.x = -Math.PI / 2;
+scene.add(ground);
+const grid = new THREE.GridHelper(20, 20, 0x3d4652, 0x2f3540);
+scene.add(grid);
+
+// ---------- Materials ----------
+const torsoMat = new THREE.MeshStandardMaterial({ color: 0x5c6f7d, roughness: 0.7 });
+const limbMat = new THREE.MeshStandardMaterial({ color: 0x4c5c68, roughness: 0.7 });
+const headMat = new THREE.MeshStandardMaterial({ color: 0xdcb894, roughness: 0.8 });
+const gearMat = new THREE.MeshStandardMaterial({ color: 0xc9a24a, roughness: 0.4, metalness: 0.3 });
+const woodMat = new THREE.MeshStandardMaterial({ color: 0x6b4a30, roughness: 0.8 });
+const glowMat = new THREE.MeshStandardMaterial({ color: 0x8fe0ff, emissive: 0x2fb6ff, emissiveIntensity: 1, roughness: 0.3 });
+const rockMat = new THREE.MeshStandardMaterial({ color: 0x6e7278, roughness: 0.95, flatShading: true });
+const barkMat = new THREE.MeshStandardMaterial({ color: 0x4a3423, roughness: 0.9 });
+const leafMat = new THREE.MeshStandardMaterial({ color: 0x3f7a4a, roughness: 0.8, flatShading: true });
+
+function capsule(r, len, mat) {
+  return new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, 8), mat);
+}
+function total(dim) { return dim.len + dim.r * 2; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function smooth(t) { t = Math.min(Math.max(t, 0), 1); return t * t * (3 - 2 * t); }
+
+// ---------- Rig dimensions ----------
+const D = {
+  waist: { r: 0.17, len: 0.08 },
+  chest: { r: 0.23, len: 0.16 },
+  neck: { r: 0.065, len: 0.05 },
+  upperArm: { r: 0.075, len: 0.20 },
+  forearm: { r: 0.065, len: 0.20 },
+  thigh: { r: 0.115, len: 0.28 },
+  shin: { r: 0.09, len: 0.26 },
+};
+const waistT = total(D.waist), chestT = total(D.chest), neckT = total(D.neck);
+const thighT = total(D.thigh), shinT = total(D.shin);
+const footH = 0.08;
+const legTotal = thighT + shinT + footH; // ground -> hip
+
+// ---------- Build rig ----------
+const character = new THREE.Object3D();
+scene.add(character);
+
+// hips: whole-body pivot (bob/sway lands here)
+const hips = new THREE.Object3D();
+hips.position.y = legTotal;
+character.add(hips);
+
+// waist -> chest, overlapped so the torso reads as one tapered column
+const waistMesh = capsule(D.waist.r, D.waist.len, torsoMat);
+waistMesh.position.y = waistT / 2;
+hips.add(waistMesh);
+
+const chestPivot = new THREE.Object3D();
+chestPivot.position.y = waistT * 0.72;
+hips.add(chestPivot);
+const chestMesh = capsule(D.chest.r, D.chest.len, torsoMat);
+chestMesh.position.y = chestT / 2;
+chestPivot.add(chestMesh);
+
+// neck -> head (cranium + jaw, not a plain sphere)
+const neckPivot = new THREE.Object3D();
+neckPivot.position.y = chestT * 0.78;
+chestPivot.add(neckPivot);
+const neckMesh = capsule(D.neck.r, D.neck.len, headMat);
+neckMesh.position.y = neckT / 2;
+neckPivot.add(neckMesh);
+
+const headPivot = new THREE.Object3D();
+headPivot.position.y = neckT * 0.75;
+neckPivot.add(headPivot);
+const cranium = new THREE.Mesh(new THREE.SphereGeometry(0.185, 16, 12), headMat);
+cranium.position.y = 0.16;
+cranium.scale.set(1, 1.1, 0.95);
+headPivot.add(cranium);
+const jaw = new THREE.Mesh(new THREE.SphereGeometry(0.12, 14, 10), headMat);
+jaw.position.set(0, 0.06, 0.06);
+jaw.scale.set(1, 0.75, 0.9);
+headPivot.add(jaw);
+const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.2, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.6), gearMat);
+helmet.position.y = 0.22;
+headPivot.add(helmet);
+
+// ---------- Two-segment limb helper (shoulder/elbow or hip/knee) ----------
+function buildLimb(parent, side, upperDim, lowerDim, mat, originX, originY, restBend) {
+  const upperT = total(upperDim), lowerT = total(lowerDim);
+
+  const upperPivot = new THREE.Object3D();
+  upperPivot.position.set(originX, originY, 0);
+  parent.add(upperPivot);
+  const upperMesh = capsule(upperDim.r, upperDim.len, mat);
+  upperMesh.position.y = -upperT / 2 + upperDim.r * 0.3;
+  upperPivot.add(upperMesh);
+
+  const midPivot = new THREE.Object3D();
+  midPivot.position.y = -upperT + upperDim.r * 0.4;
+  midPivot.rotation.x = restBend;
+  upperPivot.add(midPivot);
+  const lowerMesh = capsule(lowerDim.r, lowerDim.len, mat);
+  lowerMesh.position.y = -lowerT / 2 + lowerDim.r * 0.3;
+  midPivot.add(lowerMesh);
+
+  const endPoint = new THREE.Object3D();
+  endPoint.position.y = -lowerT + lowerDim.r * 0.3;
+  midPivot.add(endPoint);
+
+  return { upperPivot, midPivot, endPoint, upperT, lowerT };
+}
+
+// arms hang from just outside the chest surface, near the top (shoulder height), angled
+// slightly outward so they read as attached without hugging the torso. Elbow rest bend is
+// negative so the forearm tucks forward (toward the face direction, +Z), not backward.
+const REST_ARM_Z = 0.2; // right arm; left arm mirrors to -REST_ARM_Z
+const REST_ELBOW = -0.3, REST_KNEE = 0.12;
+const shoulderX = D.chest.r + D.upperArm.r * 0.25;
+const shoulderY = chestT * 0.82;
+const armL = buildLimb(chestPivot, -1, D.upperArm, D.forearm, limbMat,
+  -shoulderX, shoulderY, REST_ELBOW);
+armL.upperPivot.rotation.z = -REST_ARM_Z;
+const armR = buildLimb(chestPivot, 1, D.upperArm, D.forearm, limbMat,
+  shoulderX, shoulderY, REST_ELBOW);
+armR.upperPivot.rotation.z = REST_ARM_Z;
+
+for (const arm of [armL, armR]) {
+  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.075, 12, 10), headMat);
+  hand.scale.set(1, 0.85, 0.7);
+  arm.endPoint.add(hand);
+}
+
+// legs hang from the hips
+const legL = buildLimb(hips, -1, D.thigh, D.shin, limbMat, -D.waist.r * 1.05, 0, 0.12);
+const legR = buildLimb(hips, 1, D.thigh, D.shin, limbMat, D.waist.r * 1.05, 0, 0.12);
+for (const leg of [legL, legR]) {
+  const foot = new THREE.Mesh(new THREE.BoxGeometry(0.14, footH, 0.28), limbMat);
+  foot.position.set(0, -footH / 2, 0.07);
+  leg.endPoint.add(foot);
+  const armor = new THREE.Mesh(new THREE.CylinderGeometry(D.thigh.r * 1.08, D.thigh.r * 1.08, D.thigh.len * 0.55, 8), gearMat);
+  armor.position.y = -leg.upperT / 2 + D.thigh.r * 0.3;
+  leg.upperPivot.children[0].add(armor); // thigh mesh is children[0]
+  leg.armor = armor;
+}
+
+// ---------- Tools (right hand) ----------
+const tools = {};
+
+const swordGroup = new THREE.Group();
+const swordBlade = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.55, 0.055), gearMat);
+swordBlade.position.set(0, 0.28, 0.02);
+swordBlade.rotation.x = -0.2;
+swordGroup.add(swordBlade);
+tools.sword = swordGroup;
+
+const pickaxeGroup = new THREE.Group();
+const pickHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.5, 8), woodMat);
+pickHandle.position.set(0, 0.25, 0);
+pickaxeGroup.add(pickHandle);
+const pickHead = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.05, 0.05), gearMat);
+pickHead.position.set(0, 0.5, 0);
+pickHead.rotation.z = 0.5;
+pickaxeGroup.add(pickHead);
+tools.pickaxe = pickaxeGroup;
+
+const axeGroup = new THREE.Group();
+const axeHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.5, 8), woodMat);
+axeHandle.position.set(0, 0.25, 0);
+axeGroup.add(axeHandle);
+const axeHead = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.22, 0.14), gearMat);
+axeHead.position.set(0.09, 0.48, 0);
+axeGroup.add(axeHead);
+tools.axe = axeGroup;
+
+const staffGroup = new THREE.Group();
+const staffPole = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.75, 8), woodMat);
+staffPole.position.set(0, 0.35, 0);
+staffGroup.add(staffPole);
+const staffOrb = new THREE.Mesh(new THREE.SphereGeometry(0.06, 12, 10), glowMat);
+staffOrb.position.set(0, 0.73, 0);
+staffGroup.add(staffOrb);
+tools.staff = staffGroup;
+
+for (const name in tools) armR.endPoint.add(tools[name]);
+
+let currentTool = 'sword';
+function setTool(name) {
+  currentTool = name;
+  for (const key in tools) tools[key].visible = (key === name);
+  const twoHanded = name === 'pickaxe' || name === 'axe' || name === 'staff';
+  const shieldCb = document.getElementById('cb-shield');
+  if (twoHanded) { shield.visible = false; shieldCb.checked = false; shieldCb.disabled = true; }
+  else { shieldCb.disabled = false; shield.visible = shieldCb.checked; }
+}
+
+const shield = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.36, 0.045), gearMat);
+shield.position.set(-0.05, 0.2, 0);
+armL.endPoint.add(shield);
+
+// ---------- World props to mine/chop against ----------
+const rock = new THREE.Mesh(new THREE.IcosahedronGeometry(0.35, 0), rockMat);
+rock.position.set(-1.4, 0.3, -2.2);
+rock.rotation.set(0.4, 0.8, 0.2);
+scene.add(rock);
+
+const tree = new THREE.Group();
+const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, 1.3, 8), barkMat);
+trunk.position.y = 0.65;
+tree.add(trunk);
+const foliage = new THREE.Mesh(new THREE.IcosahedronGeometry(0.55, 0), leafMat);
+foliage.position.y = 1.5;
+tree.add(foliage);
+tree.position.set(1.7, 0, -2.4);
+scene.add(tree);
+
+// ---------- Equipment toggles ----------
+document.getElementById('cb-helmet').addEventListener('change', e => helmet.visible = e.target.checked);
+document.getElementById('cb-shield').addEventListener('change', e => shield.visible = e.target.checked);
+document.getElementById('cb-legs').addEventListener('change', e => {
+  legL.armor.visible = e.target.checked;
+  legR.armor.visible = e.target.checked;
+});
+const toolSelect = document.getElementById('sel-tool');
+toolSelect.addEventListener('change', e => setTool(e.target.value));
+setTool('sword');
+
+// ---------- Input ----------
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') { e.preventDefault(); triggerAction('attack', 'sword'); }
+  if (e.code === 'Digit1') triggerAction('mine', 'pickaxe');
+  if (e.code === 'Digit2') triggerAction('chop', 'axe');
+  if (e.code === 'Digit3') triggerAction('cast', 'staff');
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+// ---------- Action system ----------
+// Each action is a small phase-based pose function over progress 0..1, driving the right
+// (and for two-handed tools, left) arm's shoulder/elbow rotation. Blending in/out of the
+// current walk pose happens via smooth() easing between phases, same idea as a hand-authored
+// keyframe clip but computed live in code instead of sampled from an animation file.
+const ACTIONS = {
+  attack: {
+    duration: 0.45, twoHanded: false,
+    apply(p, ctx) {
+      const swing = Math.sin(Math.min(p, 1) * Math.PI);
+      return {
+        rx: ctx.armSwingR * (1 - swing) - swing * 1.7,
+        rz: REST_ARM_Z * (1 - swing) - swing * 0.35,
+        elbow: REST_ELBOW * (1 - swing),
+      };
+    },
+  },
+  mine: {
+    duration: 0.7, twoHanded: true,
+    apply(p, ctx) {
+      if (p < 0.4) {
+        const k = smooth(p / 0.4);
+        return { rx: lerp(ctx.armSwingR, -1.3, k), rz: lerp(REST_ARM_Z, 0.4, k), elbow: lerp(REST_ELBOW, -0.05, k) };
+      } else if (p < 0.55) {
+        const k = smooth((p - 0.4) / 0.15);
+        return { rx: lerp(-1.3, 0.9, k), rz: lerp(0.4, 0.15, k), elbow: lerp(-0.05, -0.6, k) };
+      }
+      const k = smooth((p - 0.55) / 0.45);
+      return { rx: lerp(0.9, ctx.armSwingR, k), rz: lerp(0.15, REST_ARM_Z, k), elbow: lerp(-0.6, REST_ELBOW, k) };
+    },
+  },
+  chop: {
+    duration: 0.55, twoHanded: true,
+    apply(p, ctx) {
+      if (p < 0.35) {
+        const k = smooth(p / 0.35);
+        return { rx: lerp(ctx.armSwingR, -1.0, k), rz: lerp(REST_ARM_Z, 0.55, k), elbow: lerp(REST_ELBOW, -0.1, k) };
+      } else if (p < 0.5) {
+        const k = smooth((p - 0.35) / 0.15);
+        return { rx: lerp(-1.0, 0.75, k), rz: lerp(0.55, -0.05, k), elbow: lerp(-0.1, -0.5, k) };
+      }
+      const k = smooth((p - 0.5) / 0.5);
+      return { rx: lerp(0.75, ctx.armSwingR, k), rz: lerp(-0.05, REST_ARM_Z, k), elbow: lerp(-0.5, REST_ELBOW, k) };
+    },
+  },
+  cast: {
+    duration: 1.0, twoHanded: true,
+    apply(p, ctx) {
+      if (p < 0.25) {
+        const k = smooth(p / 0.25);
+        return { rx: lerp(ctx.armSwingR, -1.1, k), rz: lerp(REST_ARM_Z, 0.05, k), elbow: lerp(REST_ELBOW, -0.05, k), glow: k };
+      } else if (p < 0.8) {
+        const local = (p - 0.25) / 0.55;
+        return { rx: -1.1 + Math.sin(local * Math.PI * 8) * 0.02, rz: 0.05, elbow: -0.05, glow: 1 };
+      }
+      const k = smooth((p - 0.8) / 0.2);
+      return { rx: lerp(-1.1, ctx.armSwingR, k), rz: lerp(0.05, REST_ARM_Z, k), elbow: lerp(-0.05, REST_ELBOW, k), glow: 1 - k };
+    },
+  },
+};
+
+let action = null; // { type, start }
+function triggerAction(type, requiredTool) {
+  const now = clock.getElapsedTime();
+  if (action && now - action.start < ACTIONS[action.type].duration) return;
+  if (requiredTool && currentTool !== requiredTool) {
+    toolSelect.value = requiredTool;
+    setTool(requiredTool);
+  }
+  action = { type, start: now };
+}
+
+// ---------- Procedural animation ----------
+const clock = new THREE.Clock();
+let speed = 0; // smoothed 0..1, drives walk-vs-idle blend
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.getElapsedTime();
+
+  // --- movement ---
+  const dir = new THREE.Vector3();
+  if (keys['KeyW']) dir.z -= 1;
+  if (keys['KeyS']) dir.z += 1;
+  if (keys['KeyA']) dir.x -= 1;
+  if (keys['KeyD']) dir.x += 1;
+  const moving = dir.lengthSq() > 0;
+  if (moving) {
+    dir.normalize();
+    const moveSpeed = 2.0;
+    character.position.addScaledVector(dir, moveSpeed * dt);
+    const targetAngle = Math.atan2(dir.x, dir.z);
+    let da = targetAngle - character.rotation.y;
+    da = Math.atan2(Math.sin(da), Math.cos(da));
+    character.rotation.y += da * Math.min(1, dt * 10);
+  }
+  speed += ((moving ? 1 : 0) - speed) * Math.min(1, dt * 6);
+
+  // --- idle layer: breathing bob + spine sway, always on ---
+  const idleBob = Math.sin(t * 2.2) * 0.015;
+  const idleSway = Math.sin(t * 1.1) * 0.02;
+
+  // --- walk layer ---
+  const walkFreq = 7.5;
+  const walkAmp = 0.5 * speed;
+  const walkSwing = Math.sin(t * walkFreq);
+
+  hips.position.y = legTotal + idleBob + Math.abs(walkSwing) * 0.03 * speed;
+  hips.rotation.z = idleSway * (1 - speed * 0.5);
+  chestPivot.rotation.z = -idleSway * 0.6 * (1 - speed * 0.5);
+
+  // legs: swing at hip, knee bends only while that leg swings forward
+  legL.upperPivot.rotation.x = walkSwing * walkAmp;
+  legR.upperPivot.rotation.x = -walkSwing * walkAmp;
+  legL.midPivot.rotation.x = REST_KNEE + Math.max(0, walkSwing) * 0.9 * speed;
+  legR.midPivot.rotation.x = REST_KNEE + Math.max(0, -walkSwing) * 0.9 * speed;
+
+  // arms: contralateral to legs, elbow bends more while swinging back
+  const armSwingL = -walkSwing * walkAmp * 0.8;
+  const armSwingR = walkSwing * walkAmp * 0.8;
+  armL.upperPivot.rotation.x = armSwingL;
+  armL.midPivot.rotation.x = REST_ELBOW - Math.max(0, -walkSwing) * 0.5 * speed;
+
+  // --- action layer: an active action overrides the right arm (and left, if two-handed) ---
+  if (action) {
+    const def = ACTIONS[action.type];
+    const p = (t - action.start) / def.duration;
+    if (p >= 1) {
+      action = null;
+      armR.upperPivot.rotation.x = armSwingR;
+      armR.upperPivot.rotation.z = REST_ARM_Z;
+      armR.midPivot.rotation.x = REST_ELBOW - Math.max(0, walkSwing) * 0.5 * speed;
+      staffOrb.scale.setScalar(1);
+      glowMat.emissiveIntensity = 1;
+    } else {
+      const pose = def.apply(p, { armSwingR, armSwingL, walkSwing });
+      armR.upperPivot.rotation.x = pose.rx;
+      armR.upperPivot.rotation.z = pose.rz;
+      armR.midPivot.rotation.x = pose.elbow;
+      if (def.twoHanded) {
+        armL.upperPivot.rotation.x = pose.rx * 0.85;
+        armL.upperPivot.rotation.z = lerp(-REST_ARM_Z, -0.06, smooth(pose.rz / REST_ARM_Z));
+        armL.midPivot.rotation.x = pose.elbow * 0.7;
+      }
+      if (pose.glow !== undefined) {
+        staffOrb.scale.setScalar(1 + pose.glow * 0.6);
+        glowMat.emissiveIntensity = 1 + pose.glow * 2;
+      }
+    }
+  } else {
+    armR.upperPivot.rotation.x = armSwingR;
+    armR.upperPivot.rotation.z = REST_ARM_Z;
+    armR.midPivot.rotation.x = REST_ELBOW - Math.max(0, walkSwing) * 0.5 * speed;
+  }
+
+  controls.target.lerp(new THREE.Vector3(character.position.x, 0.7, character.position.z), 0.1);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
