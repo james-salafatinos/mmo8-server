@@ -16,6 +16,7 @@ import { NetworkManager } from './network/NetworkManager.js';
 import { EditorManager } from './editor/EditorManager.js';
 import { EditorUI } from './editor/EditorUI.js';
 import { RoomRenderer } from './game/RoomRenderer.js';
+import { ChunkStreamer } from './game/ChunkStreamer.js';
 
 // Initialize socket connection
 const socket = io();
@@ -42,6 +43,7 @@ let game = null;
 let editorManager = null;
 let editorUI = null;
 let roomRenderer = null;
+let chunkStreamer = null;
 
 // Handle successful login
 networkManager.onLogin(async (userData) => {
@@ -55,6 +57,7 @@ networkManager.onLogin(async (userData) => {
 
     // Initialize room renderer
     roomRenderer = new RoomRenderer(game.scene);
+    chunkStreamer = new ChunkStreamer(networkManager, roomRenderer);
 
     // Initialize editor manager and UI
     editorManager = new EditorManager(game, networkManager);
@@ -92,6 +95,7 @@ networkManager.onLogin(async (userData) => {
     window.addEventListener('roomChanged', (e) => {
         if (e.detail && e.detail.layout) {
             roomRenderer.loadRoom(e.detail.roomId, e.detail.layout);
+            chunkStreamer.refresh(e.detail.roomId);
         }
     });
 
@@ -109,6 +113,34 @@ networkManager.onLogin(async (userData) => {
         }
     });
 
+    // Handle walking across a chunk boundary into an adjacent room - unlike
+    // roomChanged (client-initiated joinRoom), this is server-pushed, so it
+    // also has to reposition the local player mesh itself (bypassing lerp,
+    // same idiom as playerTeleported).
+    networkManager.socket.on('roomTransition', (data) => {
+        if (roomRenderer && data.layout) {
+            roomRenderer.loadRoom(data.roomId, data.layout);
+            chunkStreamer.refresh(data.roomId);
+        }
+        // Keep the HUD (and, if open, editor toolbar) room dropdown in sync -
+        // this is a server push, not a dropdown-initiated joinRoom, so
+        // nothing else updates their displayed value.
+        const hudDropdown = document.getElementById('room-dropdown');
+        if (hudDropdown) hudDropdown.value = data.roomId;
+        const editorDropdown = document.getElementById('editor-room-select');
+        if (editorDropdown) editorDropdown.value = data.roomId;
+        if (game && game.playerManager) {
+            const userId = userData.user.id;
+            const player = game.playerManager.players.get(userId)
+                        || game.playerManager.players.get(Number(userId))
+                        || game.playerManager.players.get(String(userId));
+            if (player) {
+                player.mesh.position.set(data.x, data.y, data.z);
+                player.targetPos.set(data.x, data.y, data.z);
+            }
+        }
+    });
+
     // Join saved room (or default) - use skipSpawn to preserve saved position on re-login
     const roomDropdown = document.getElementById('room-dropdown');
     const savedRoomId = userData.user.current_room_id;
@@ -119,6 +151,7 @@ networkManager.onLogin(async (userData) => {
     networkManager.socket.emit('joinRoom', { roomId: targetRoomId, skipSpawn: true }, (result) => {
         if (result.success && result.layout) {
             roomRenderer.loadRoom(result.roomId, result.layout);
+            chunkStreamer.refresh(result.roomId);
         }
     });
 });

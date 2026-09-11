@@ -33,6 +33,11 @@ export class Game {
         this.cameraDistance = 20;
         this.cameraAngle = 0;
         this.cameraPitch = 45; // degrees from horizontal (15-75)
+
+        // Editor mode uses a detached free camera instead of following the
+        // player - set on entering editor mode, cleared on exit so the next
+        // visit starts back at the player's position.
+        this.editorCameraTarget = null;
     }
 
     init() {
@@ -213,6 +218,17 @@ export class Game {
             }
         });
         
+        // Trigger the attacker's swing animation on every hit/miss (covers both directions -
+        // combatHit/combatMiss are sent to both the attacker and defender sockets).
+        const triggerAttackAnim = (data) => {
+            const attacker = this.playerManager.players.get(data.attackerId)
+                          || this.playerManager.players.get(Number(data.attackerId))
+                          || this.playerManager.players.get(String(data.attackerId));
+            if (attacker && attacker.animator) attacker.animator.triggerAction('attack');
+        };
+        this.networkManager.socket.on('combatHit', triggerAttackAnim);
+        this.networkManager.socket.on('combatMiss', triggerAttackAnim);
+
         // Handle spell cast from other players (render their projectiles)
         console.log('CLIENT: Registering spellCast listener');
         this.networkManager.socket.on('spellCast', (data) => {
@@ -225,7 +241,12 @@ export class Game {
                 return;
             }
             console.log('CLIENT: Rendering spell from other player');
-            
+
+            const caster = this.playerManager.players.get(casterId)
+                        || this.playerManager.players.get(Number(casterId))
+                        || this.playerManager.players.get(String(casterId));
+            if (caster && caster.animator) caster.animator.triggerAction('cast');
+
             // Spell definitions for visual rendering
             const spellDefs = {
                 fireball: { type: 'damage', color: 0xff4400 },
@@ -236,12 +257,7 @@ export class Game {
             
             const spell = spellDefs[spellId];
             if (!spell) return;
-            
-            // Get caster position
-            const caster = this.playerManager.players.get(casterId)
-                        || this.playerManager.players.get(Number(casterId))
-                        || this.playerManager.players.get(String(casterId));
-            
+
             let startPos;
             if (casterX !== undefined) {
                 startPos = new THREE.Vector3(casterX, casterY || 0.5, casterZ);
@@ -283,10 +299,22 @@ export class Game {
         if (this.playerManager) {
             this.playerManager.update(deltaTime);
 
-            // Follow local player with camera
-            const localPlayer = this.playerManager.getLocalPlayer();
-            if (localPlayer) {
-                this.updateCamera(localPlayer.position);
+            if (document.body.classList.contains('editor-mode')) {
+                // Detached free camera - stays put until panned, doesn't
+                // follow the player around while placing objects.
+                if (!this.editorCameraTarget) {
+                    const localPlayer = this.playerManager.getLocalPlayer();
+                    this.editorCameraTarget = localPlayer
+                        ? localPlayer.position.clone()
+                        : new THREE.Vector3(0, 0, 0);
+                }
+                this.updateCamera(this.editorCameraTarget);
+            } else {
+                this.editorCameraTarget = null;
+                const localPlayer = this.playerManager.getLocalPlayer();
+                if (localPlayer) {
+                    this.updateCamera(localPlayer.position);
+                }
             }
         }
 
@@ -329,6 +357,26 @@ export class Game {
         this.cameraDistance = distance;
         this.cameraAngle = angle;
         this.cameraPitch = pitch;
+    }
+
+    // Called by InputManager on right-mouse-drag while in editor mode - slides
+    // the detached camera target across the ground plane instead of orbiting.
+    panEditorCamera(deltaX, deltaY) {
+        if (!this.editorCameraTarget) return;
+
+        const panSpeed = 0.0015 * this.cameraDistance;
+        const angle = this.cameraAngle;
+        const rightX = Math.cos(angle);
+        const rightZ = -Math.sin(angle);
+        // sin/cos(angle) point from the target toward the camera (see
+        // updateCamera's offsetX/offsetZ) - i.e. backward relative to the view
+        // direction - so dragging down (deltaY > 0) needs to subtract along
+        // this axis to move the target further into view ("closer").
+        const towardCameraX = Math.sin(angle);
+        const towardCameraZ = Math.cos(angle);
+
+        this.editorCameraTarget.x += (-deltaX * rightX - deltaY * towardCameraX) * panSpeed;
+        this.editorCameraTarget.z += (-deltaX * rightZ - deltaY * towardCameraZ) * panSpeed;
     }
 
     onResize() {

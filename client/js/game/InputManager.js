@@ -45,6 +45,11 @@ export class InputManager {
         // Middle mouse drag state (desktop orbit)
         this.isMiddleMouseDragging = false;
         this.lastMousePos = { x: 0, y: 0 };
+        // Per-event cap (px) for mouse-drag deltas - see clampMouseDelta.
+        this.maxMouseDeltaPerEvent = 50;
+
+        // Right mouse drag state (editor-mode free camera pan)
+        this.isRightMouseDragging = false;
         
         // Follow target state
         this.followTargetId = null;
@@ -121,11 +126,20 @@ export class InputManager {
             this.handleRightClick(e);
         });
         
-        // Middle mouse button drag for orbit (desktop)
+        // Middle/right mouse drag for orbit/pan (desktop). mousedown starts the
+        // drag on the canvas (so it only begins from an actual click on the 3D
+        // view), but move/up are tracked on window rather than the canvas - a
+        // fast flick easily carries the cursor past the canvas's bounds (worse
+        // in editor mode, where the canvas is narrowed by the side panels),
+        // and canvas-scoped mousemove stops firing the instant that happens.
+        // That used to fire a canvas `mouseleave` -> onMouseUp, force-ending
+        // the drag mid-gesture - which is what read as the camera "jittering
+        // and resetting" on a fast flick. Tracking on window means the drag
+        // keeps following the mouse whether it takes it over the side panels
+        // or the browser chrome, and only ends on an actual mouseup.
         canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
-        canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
-        canvas.addEventListener('mouseup', (e) => this.onMouseUp(e));
-        canvas.addEventListener('mouseleave', (e) => this.onMouseUp(e));
+        window.addEventListener('mousemove', (e) => this.onMouseMove(e));
+        window.addEventListener('mouseup', (e) => this.onMouseUp(e));
 
         // Touch events
         canvas.addEventListener('touchstart', (e) => this.onTouchStart(e), { passive: false });
@@ -287,6 +301,12 @@ export class InputManager {
             e.preventDefault();
             this.isMiddleMouseDragging = true;
             this.lastMousePos = { x: e.clientX, y: e.clientY };
+        } else if (e.button === 2 && document.body.classList.contains('editor-mode')) {
+            // Right mouse drag pans the detached editor camera (middle mouse
+            // still orbits it - see onMouseMove)
+            e.preventDefault();
+            this.isRightMouseDragging = true;
+            this.lastMousePos = { x: e.clientX, y: e.clientY };
         }
     }
     
@@ -299,27 +319,58 @@ export class InputManager {
                 this.updateSpellTargetHighlight(e, spellType === 'heal');
             }
         }
-        
+
+        if (this.isRightMouseDragging) {
+            const deltaX = this.clampMouseDelta(e.clientX - this.lastMousePos.x);
+            const deltaY = this.clampMouseDelta(e.clientY - this.lastMousePos.y);
+            this.game.panEditorCamera(deltaX, deltaY);
+            this.lastMousePos = { x: e.clientX, y: e.clientY };
+            return;
+        }
+
         if (!this.isMiddleMouseDragging) return;
-        
-        const deltaX = e.clientX - this.lastMousePos.x;
-        const deltaY = e.clientY - this.lastMousePos.y;
-        
+
+        // Clamp per-event movement before scaling it into a rotation. A fast
+        // flick doesn't produce more/smaller mousemove events - the browser
+        // coalesces rapid pointer samples into fewer, larger-delta events
+        // (each one lands on a display-refresh boundary), so "moving fast"
+        // means occasional huge single-event deltas rather than a smooth
+        // stream of small ones. Multiplied straight through, one of those
+        // could swing cameraAngle several radians (well past a full 360) or
+        // snap cameraPitch across its whole range in a single frame - that's
+        // the "acceleration"/"almost 360"/freak-out the fast-flick case
+        // reported. Slow, deliberate drags stay well under the cap and are
+        // completely unaffected.
+        const deltaX = this.clampMouseDelta(e.clientX - this.lastMousePos.x);
+        const deltaY = this.clampMouseDelta(e.clientY - this.lastMousePos.y);
+
         // Update camera angles (same sensitivity as two-finger)
         this.cameraAngle -= deltaX * 0.01;
         this.cameraPitch = Math.max(this.minPitch, Math.min(this.maxPitch, this.cameraPitch + deltaY * 0.2));
-        
+
         // Update camera
         this.game.updateCameraOrbit(this.cameraDistance, this.cameraAngle, this.cameraPitch);
-        
+
         this.lastMousePos = { x: e.clientX, y: e.clientY };
     }
-    
+
     // Mouse up handler
     onMouseUp(e) {
         if (e.button === 1 || this.isMiddleMouseDragging) {
             this.isMiddleMouseDragging = false;
         }
+        if (e.button === 2 || this.isRightMouseDragging) {
+            this.isRightMouseDragging = false;
+        }
+    }
+
+    // Caps a single mousemove event's raw pixel delta before it's scaled into
+    // a rotation/pan amount. Without this, a fast flick - which the browser
+    // reports as occasional large-delta events rather than a smooth stream of
+    // small ones - can swing the camera far more than the same physical
+    // gesture would at a slower, evenly-sampled speed.
+    clampMouseDelta(delta) {
+        return Math.max(-this.maxMouseDeltaPerEvent, Math.min(this.maxMouseDeltaPerEvent, delta));
     }
     
     // Mouse wheel handler (desktop zoom)
@@ -459,8 +510,8 @@ export class InputManager {
                 
                 if (groundIntersects.length > 0) {
                     const point = groundIntersects[0].point;
-                    const x = Math.max(-24, Math.min(24, point.x));
-                    const z = Math.max(-24, Math.min(24, point.z));
+                    const x = Math.max(-25, Math.min(25, point.x));
+                    const z = Math.max(-25, Math.min(25, point.z));
                     this.castTeleportSpell(x, z);
                     return;
                 }
@@ -475,8 +526,8 @@ export class InputManager {
 
         if (intersects.length > 0) {
             const point = intersects[0].point;
-            const x = Math.max(-24, Math.min(24, point.x));
-            const z = Math.max(-24, Math.min(24, point.z));
+            const x = Math.max(-25, Math.min(25, point.x));
+            const z = Math.max(-25, Math.min(25, point.z));
 
             this.showTapIndicator(x, z);
             this.networkManager.sendMove(x, z);
@@ -660,8 +711,8 @@ export class InputManager {
         
         // Add ground options
         if (hitGround && groundPoint) {
-            const x = Math.max(-24, Math.min(24, groundPoint.x)).toFixed(1);
-            const z = Math.max(-24, Math.min(24, groundPoint.z)).toFixed(1);
+            const x = Math.max(-25, Math.min(25, groundPoint.x)).toFixed(1);
+            const z = Math.max(-25, Math.min(25, groundPoint.z)).toFixed(1);
             items.push({
                 label: `📍 Move here (${x}, ${z})`,
                 type: 'ground',
@@ -1213,6 +1264,9 @@ export class InputManager {
     
     // Finish spell cast (cleanup)
     finishSpellCast() {
+        const localPlayer = this.game.playerManager.players.get(this.game.playerManager.localUserId);
+        if (localPlayer && localPlayer.animator) localPlayer.animator.triggerAction('cast');
+
         this.hideSpellTargetHighlight();
         this.setCastMode(false);
         window.dispatchEvent(new CustomEvent('spellCastComplete'));

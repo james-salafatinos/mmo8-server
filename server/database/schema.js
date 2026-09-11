@@ -98,6 +98,25 @@ export function initializeDatabase(db) {
         )
     `);
 
+    // Migration: add world-grid position to rooms, for chunk-style terrain
+    // (NULL = not placed in the grid, so pre-existing rooms are unaffected).
+    // SQLite's unique index treats every NULL as distinct, so any number of
+    // ungridded rooms can coexist - only two rooms sharing the same non-null
+    // (grid_x, grid_y) pair collides.
+    try {
+        const roomCols = db.prepare("PRAGMA table_info(rooms)").all();
+        const roomColNames = roomCols.map(c => c.name);
+        if (!roomColNames.includes('grid_x')) {
+            db.exec(`ALTER TABLE rooms ADD COLUMN grid_x INTEGER DEFAULT NULL`);
+        }
+        if (!roomColNames.includes('grid_y')) {
+            db.exec(`ALTER TABLE rooms ADD COLUMN grid_y INTEGER DEFAULT NULL`);
+        }
+        db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_rooms_grid_position ON rooms(grid_x, grid_y)`);
+    } catch (err) {
+        console.error('Migration error (rooms grid position):', err);
+    }
+
     // Add current_room_id to player_state if not exists
     try {
         const cols = db.prepare("PRAGMA table_info(player_state)").all();
@@ -352,9 +371,11 @@ export function createStatements(db) {
         getAllRooms: db.prepare(`SELECT * FROM rooms ORDER BY id`),
         getRoomById: db.prepare(`SELECT * FROM rooms WHERE id = ?`),
         getRoomByName: db.prepare(`SELECT * FROM rooms WHERE name = ?`),
-        createRoom: db.prepare(`INSERT INTO rooms (name, description) VALUES (?, ?)`),
+        createRoom: db.prepare(`INSERT INTO rooms (name, description, grid_x, grid_y) VALUES (?, ?, ?, ?)`),
         updateRoom: db.prepare(`UPDATE rooms SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`),
         deleteRoom: db.prepare(`DELETE FROM rooms WHERE id = ?`),
+        getRoomByGridPos: db.prepare(`SELECT * FROM rooms WHERE grid_x = ? AND grid_y = ?`),
+        setRoomGridPosition: db.prepare(`UPDATE rooms SET grid_x = ?, grid_y = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`),
 
         // Room layout operations
         getRoomLayout: db.prepare(`SELECT * FROM room_layouts WHERE room_id = ?`),

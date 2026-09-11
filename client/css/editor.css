@@ -6,6 +6,15 @@ body.editor-mode #scene-container {
     margin-right: 280px;
 }
 
+/* Keep the game dock (chat/spells/music/etc.) between the asset palette and
+   inspector instead of underneath them - it's fixed-positioned independently
+   of #scene-container so it needs the same insets applied directly. */
+body.editor-mode #game-ui-dock {
+    left: 250px;
+    right: 280px;
+    width: auto;
+}
+
 /* Editor Modal */
 .editor-modal {
     position: fixed;
@@ -312,7 +321,7 @@ body.editor-mode #scene-container {
 #inspector-panel {
     position: fixed;
     top: 50px;
-    right: 50px;
+    right: 0;
     bottom: 0;
     width: 280px;
     flex-direction: column;
@@ -627,6 +636,11 @@ body.editor-mode #scene-container {
     #inspector-panel {
         width: 220px;
     }
+
+    body.editor-mode #game-ui-dock {
+        left: 200px;
+        right: 220px;
+    }
 }
 
 /* Items Editor Panel */
@@ -765,4 +779,148 @@ body.editor-mode #scene-container {
 .form-row textarea {
     min-height: 60px;
     resize: vertical;
+}
+
+/* Terrain Builder */
+.terrain-builder-content {
+    max-width: 90vw;
+    text-align: left;
+}
+
+.terrain-builder-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+.terrain-builder-header h3 {
+    margin: 0;
+}
+
+.terrain-builder-hint {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.85rem;
+    margin-bottom: 15px;
+    max-width: 500px;
+}
+
+.terrain-builder-grid {
+    display: grid;
+    gap: 4px;
+    max-height: 55vh;
+    overflow: auto;
+    padding: 4px;
+    margin-bottom: 15px;
+}
+
+.terrain-cell {
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 0.75rem;
+    border-radius: 4px;
+    cursor: pointer;
+    overflow: hidden;
+    word-break: break-word;
+    border: 2px solid transparent;
+}
+
+.terrain-cell-empty {
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.3);
+    border: 1px dashed rgba(255, 255, 255, 0.15);
+}
+
+.terrain-cell-empty:hover {
+    background: rgba(102, 126, 234, 0.2);
+    color: #fff;
+}
+
+.terrain-cell-filled {
+    background: rgba(102, 126, 234, 0.3);
+    color: #fff;
+}
+
+.terrain-cell-filled:hover {
+    background: rgba(102, 126, 234, 0.5);
+}
+
+/* Open edges (a neighboring chunk exists) get a solid highlighted border on
+   that side; walled edges (no neighbor - movement stops there) stay dashed. */
+.terrain-cell-filled.edge-n-open { border-top-color: #2ecc71; }
+.terrain-cell-filled.edge-s-open { border-bottom-color: #2ecc71; }
+.terrain-cell-filled.edge-e-open { border-right-color: #2ecc71; }
+.terrain-cell-filled.edge-w-open { border-left-color: #2ecc71; }
+.terrain-cell-filled.edge-n-wall { border-top: 2px dashed rgba(255, 255, 255, 0.2); }
+.terrain-cell-filled.edge-s-wall { border-bottom: 2px dashed rgba(255, 255, 255, 0.2); }
+.terrain-cell-filled.edge-e-wall { border-right: 2px dashed rgba(255, 255, 255, 0.2); }
+.terrain-cell-filled.edge-w-wall { border-left: 2px dashed rgba(255, 255, 255, 0.2); }
+
+.terrain-builder-ungridded {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-top: 15px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.terrain-builder-ungridded select {
+    padding: 6px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+.terrain-builder-place-hint {
+    color: #f1c40f;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* [hidden] must win over the display:inline-flex above - author rules always
+   beat the browser's default `[hidden]{display:none}`, regardless of
+   specificity, so without this the hint showed up even while armed=false. */
+.terrain-builder-place-hint[hidden] {
+    display: none;
+}
+
+/* Armed for "place existing room" - every empty cell is a valid drop target */
+.terrain-cell-armed {
+    background: rgba(46, 204, 113, 0.15);
+    border: 2px dashed #2ecc71;
+    color: #2ecc71;
+    animation: terrainCellPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes terrainCellPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+}
+
+.terrain-cell-editing {
+    cursor: default;
+    background: rgba(255, 255, 255, 0.08);
+    border-color: #667eea;
+}
+
+.terrain-cell-input {
+    width: 100%;
+    padding: 4px;
+    border: none;
+    background: transparent;
+    color: #fff;
+    font-size: 0.75rem;
+    text-align: center;
+}
+
+.terrain-cell-input:focus {
+    outline: none;
 }

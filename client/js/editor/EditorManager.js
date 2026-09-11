@@ -59,14 +59,37 @@ export class EditorManager {
 
         // Cache of generated asset-palette thumbnails (assetId -> data URL)
         this.thumbnailCache = new Map();
+        // Serializes thumbnail rendering (see getAssetThumbnail) so only one
+        // offscreen WebGLRenderer/context exists at a time.
+        this.thumbnailQueue = Promise.resolve();
     }
 
-    // Render a small preview image of a file-based asset for the palette icon
+    // Render a small preview image of a file-based asset for the palette icon.
+    // Callers (EditorUI.populateAssetPalette) fire this once per file asset
+    // without awaiting, so with ~90 file assets in the palette this used to
+    // spin up ~90 WebGLRenderers (and GL contexts) nearly simultaneously -
+    // .dispose() releases the renderer's own resources but the browser only
+    // frees the underlying context on GC of the canvas, which doesn't happen
+    // fast enough to stay under the browser's hard context limit (~16),
+    // evicting whichever context is oldest - sometimes the main game
+    // renderer's, which then shows as a blank/white screen. Queuing the
+    // actual render work means at most one extra context exists at a time,
+    // and force-losing it via WEBGL_lose_context frees it immediately
+    // instead of waiting on GC.
     async getAssetThumbnail(asset) {
         if (!asset || asset.type !== 'file' || !asset.path) return null;
         if (this.thumbnailCache.has(asset.id)) return this.thumbnailCache.get(asset.id);
 
-        const dataUrl = await new Promise((resolve) => {
+        const result = this.thumbnailQueue.then(() => this.renderAssetThumbnail(asset));
+        this.thumbnailQueue = result.catch(() => {});
+
+        const dataUrl = await result;
+        this.thumbnailCache.set(asset.id, dataUrl);
+        return dataUrl;
+    }
+
+    renderAssetThumbnail(asset) {
+        return new Promise((resolve) => {
             const size = 64;
             const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
             renderer.setSize(size, size);
@@ -79,6 +102,14 @@ export class EditorManager {
             const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
             dirLight.position.set(2, 3, 2);
             scene.add(dirLight);
+
+            const finish = (url) => {
+                renderer.dispose();
+                // Force the context to actually free now rather than waiting
+                // on this throwaway canvas to be garbage collected.
+                renderer.getContext().getExtension('WEBGL_lose_context')?.loseContext();
+                resolve(url);
+            };
 
             this.gltfLoader.load(asset.path, (gltf) => {
                 const model = gltf.scene;
@@ -96,18 +127,11 @@ export class EditorManager {
                 camera.lookAt(0, 0, 0);
 
                 renderer.render(scene, camera);
-                const url = renderer.domElement.toDataURL('image/png');
-
-                renderer.dispose();
-                resolve(url);
+                finish(renderer.domElement.toDataURL('image/png'));
             }, undefined, () => {
-                renderer.dispose();
-                resolve(null);
+                finish(null);
             });
         });
-
-        this.thumbnailCache.set(asset.id, dataUrl);
-        return dataUrl;
     }
 
     // Check if user already has an admin session

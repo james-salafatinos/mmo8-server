@@ -13,6 +13,7 @@ import { World } from './ecs/World.js';
 import { Entity } from './ecs/Entity.js';
 import { Transform, Player, Movement, Network, Combat, Inventory, Equipment, ActiveEffects } from './ecs/components/index.js';
 import { MovementSystem } from './ecs/systems/MovementSystem.js';
+import { RoomTransitionSystem } from './ecs/systems/RoomTransitionSystem.js';
 import { NetworkSystem } from './ecs/systems/NetworkSystem.js';
 import { PersistenceSystem } from './ecs/systems/PersistenceSystem.js';
 import { CombatSystem } from './ecs/systems/CombatSystem.js';
@@ -39,8 +40,9 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer);
 
-// Initialize SQLite database
-const db = new Database(join(__dirname, '../data/game.db'));
+// Initialize SQLite database (DB_PATH override lets tests point at a temp/in-memory db)
+const dbPath = process.env.DB_PATH || join(__dirname, '../data/game.db');
+const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 initializeDatabase(db);
 const statements = createStatements(db);
@@ -76,7 +78,8 @@ worldItemSystem.loadWorldItems();
 persistenceSystem.inventorySystem = inventorySystem;
 persistenceSystem.equipmentSystem = equipmentSystem;
 
-world.addSystem(new MovementSystem());
+world.addSystem(new MovementSystem(roomManager));
+world.addSystem(new RoomTransitionSystem(roomManager, worldItemSystem));
 world.addSystem(combatSystem);
 world.addSystem(equipmentSystem);
 world.addSystem(consumableSystem);
@@ -831,7 +834,7 @@ io.on('connection', (socket) => {
         const currentRoom = roomManager.getPlayerRoom(socket.id);
         const isRoomChange = currentRoom !== roomId;
         
-        const result = roomManager.joinRoom(socket.id, roomId);
+        const result = roomManager.joinRoom(socket.id, roomId, userId);
         if (result.success) {
             const entityId = playerEntities.get(userId);
             if (entityId) {
@@ -858,9 +861,7 @@ io.on('connection', (socket) => {
                     }
                 }
             }
-            // Save room to player state
-            statements.updatePlayerRoom.run(roomId, userId);
-            
+
             // Send full state for the new room (only players in this room)
             networkSystem.sendFullState(socket.id, roomId);
             
@@ -873,13 +874,25 @@ io.on('connection', (socket) => {
 
     // Create room (admin only)
     socket.on('createRoom', (data, callback) => {
-        const { adminToken, name, description } = data;
+        const { adminToken, name, description, gridX, gridY } = data;
         const validation = adminManager.validateAdminToken(adminToken);
         if (!validation.valid) {
             callback({ success: false, error: validation.error });
             return;
         }
-        const result = roomManager.createRoom(name, description);
+        const result = roomManager.createRoom(name, description, gridX ?? null, gridY ?? null);
+        callback(result);
+    });
+
+    // Place an existing room in the terrain grid, or move it (admin only)
+    socket.on('setRoomGridPosition', (data, callback) => {
+        const { adminToken, roomId, gridX, gridY } = data;
+        const validation = adminManager.validateAdminToken(adminToken);
+        if (!validation.valid) {
+            callback({ success: false, error: validation.error });
+            return;
+        }
+        const result = roomManager.setRoomGridPosition(roomId, gridX, gridY);
         callback(result);
     });
 

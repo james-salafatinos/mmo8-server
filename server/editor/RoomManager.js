@@ -53,10 +53,52 @@ export class RoomManager {
                 id: room.id,
                 name: room.name,
                 description: room.description,
-                layoutVersion: room.layoutVersion
+                layoutVersion: room.layoutVersion,
+                gridX: room.grid_x,
+                gridY: room.grid_y
             });
         }
         return rooms;
+    }
+
+    // Find a placed (gridded) room at an exact grid cell, or null.
+    getRoomByGrid(gridX, gridY) {
+        if (gridX === null || gridX === undefined || gridY === null || gridY === undefined) return null;
+        for (const room of this.roomLayouts.values()) {
+            if (room.grid_x === gridX && room.grid_y === gridY) return room;
+        }
+        return null;
+    }
+
+    // Find the chunk adjacent to `room` in one direction. Exactly one of
+    // dx/dz should be +/-1 - grid_x maps to world x, grid_y maps to world z.
+    // Returns null if `room` isn't placed in the grid, or there's no
+    // neighboring chunk in that direction yet.
+    getNeighborRoom(room, dx, dz) {
+        if (!room || room.grid_x === null || room.grid_x === undefined ||
+            room.grid_y === null || room.grid_y === undefined) return null;
+        return this.getRoomByGrid(room.grid_x + dx, room.grid_y + dz);
+    }
+
+    // Place an existing (possibly previously-ungridded) room at a grid cell.
+    setRoomGridPosition(roomId, gridX, gridY) {
+        const room = this.roomLayouts.get(roomId);
+        if (!room) {
+            return { success: false, error: 'Room not found' };
+        }
+        const occupant = this.getRoomByGrid(gridX, gridY);
+        if (occupant && occupant.id !== roomId) {
+            return { success: false, error: 'That grid cell is already occupied' };
+        }
+        try {
+            this.statements.setRoomGridPosition.run(gridX, gridY, roomId);
+            room.grid_x = gridX;
+            room.grid_y = gridY;
+            return { success: true, room: { id: room.id, name: room.name, gridX, gridY } };
+        } catch (err) {
+            console.error('Error setting room grid position:', err);
+            return { success: false, error: 'Failed to place room' };
+        }
     }
 
     // Get room by ID
@@ -79,28 +121,34 @@ export class RoomManager {
         };
     }
 
-    // Create a new room (admin only)
-    createRoom(name, description = '') {
+    // Create a new room (admin only). gridX/gridY are optional - omit them
+    // (or pass null) to create an ungridded room, same as before this option existed.
+    createRoom(name, description = '', gridX = null, gridY = null) {
+        if (gridX !== null && gridY !== null && this.getRoomByGrid(gridX, gridY)) {
+            return { success: false, error: 'That grid cell is already occupied' };
+        }
         try {
-            const result = this.statements.createRoom.run(name, description);
+            const result = this.statements.createRoom.run(name, description, gridX, gridY);
             const roomId = result.lastInsertRowid;
-            
+
             // Create empty layout
             this.statements.createRoomLayout.run(roomId, '[]', '[]', '[]', 1);
-            
+
             const room = {
                 id: roomId,
                 name,
                 description,
+                grid_x: gridX,
+                grid_y: gridY,
                 objects: [],
                 spawnPoints: [{ x: 0, y: 0.5, z: 0, name: 'default' }],
                 markers: [],
                 layoutVersion: 1
             };
-            
+
             this.roomLayouts.set(roomId, room);
-            
-            return { success: true, room };
+
+            return { success: true, room: { ...room, gridX, gridY } };
         } catch (err) {
             console.error('Error creating room:', err);
             return { success: false, error: 'Failed to create room' };
@@ -200,19 +248,21 @@ export class RoomManager {
         });
     }
 
-    // Join a room
-    joinRoom(socketId, roomId) {
+    // Join a room. Pass userId to also persist it as the player's saved room
+    // (the joinRoom socket handler and RoomTransitionSystem both do this,
+    // instead of each duplicating the statements.setRoomGridPosition-style update).
+    joinRoom(socketId, roomId, userId = null) {
         const room = this.roomLayouts.get(roomId);
         if (!room) {
             return { success: false, error: 'Room not found' };
         }
-        
+
         // Leave current room if any
         this.leaveRoom(socketId);
-        
+
         // Join new room in memory
         this.playerRooms.set(socketId, roomId);
-        
+
         // Join Socket.IO room for broadcasting
         const socket = this.io.sockets.sockets.get(socketId);
         if (socket) {
@@ -221,10 +271,14 @@ export class RoomManager {
         } else {
             console.warn(`Socket ${socketId} not found when joining room ${roomId}`);
         }
-        
+
+        if (userId !== null && userId !== undefined) {
+            this.statements.updatePlayerRoom.run(roomId, userId);
+        }
+
         // Get spawn point
         const spawnPoint = room.spawnPoints[0] || { x: 0, y: 0.5, z: 0 };
-        
+
         return {
             success: true,
             roomId,

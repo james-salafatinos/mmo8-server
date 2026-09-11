@@ -1,11 +1,19 @@
 // Player Manager - handles player entities and rendering
 import * as THREE from 'three';
+import { createCharacterRig } from './CharacterRig.js';
+import { PoseAnimator } from './PoseAnimator.js';
+
+// Label/health-bar/chat-bubble heights (above the player's root position) - taller than the
+// old 1x1x1 cube needed, since the procedural rig stands roughly 1.8 units above the ground.
+const LABEL_Y = 2.0;
+const HEALTHBAR_Y = 2.3;
+const CHATBUBBLE_Y = 2.8;
 
 export class PlayerManager {
     constructor(scene, userData) {
         this.scene = scene;
         this.localUserId = userData.user.id;
-        this.players = new Map(); // userId -> { mesh, label, healthBar, chatBubble, data, targetPos }
+        this.players = new Map(); // userId -> { mesh, animator, label, healthBar, chatBubble, data, targetPos }
         this.chatBubbleDuration = 5000; // 5 seconds
     }
 
@@ -68,28 +76,24 @@ export class PlayerManager {
     }
 
     createPlayerMesh(playerData) {
-        // Create player cube
-        const geometry = new THREE.BoxGeometry(1, 1, 1);
-        const material = new THREE.MeshStandardMaterial({ 
-            color: playerData.color,
-            roughness: 0.5,
-            metalness: 0.3
-        });
-        const mesh = new THREE.Mesh(geometry, material);
+        // Procedural rig (see CharacterRig.js) - its root is a drop-in replacement for the
+        // old cube mesh: same position/rotation convention, same raycast/dispose call sites.
+        const rig = createCharacterRig();
+        const mesh = rig.root;
         mesh.position.set(playerData.x, playerData.y, playerData.z);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
+        mesh.userData.userId = playerData.userId;
 
         // Create name label
         const label = this.createLabel(playerData.username, playerData.color);
-        label.position.set(playerData.x, playerData.y + 1.2, playerData.z);
+        label.position.set(playerData.x, playerData.y + LABEL_Y, playerData.z);
 
         // Create health bar
         const healthBar = this.createHealthBar(playerData.hitpoints || 10, playerData.max_hitpoints || 10);
-        healthBar.position.set(playerData.x, playerData.y + 1.8, playerData.z);
+        healthBar.position.set(playerData.x, playerData.y + HEALTHBAR_Y, playerData.z);
 
         return {
             mesh,
+            animator: new PoseAnimator(rig),
             label,
             healthBar,
             chatBubble: null,
@@ -178,7 +182,7 @@ export class PlayerManager {
         player.healthBar = this.createHealthBar(currentHp, maxHp);
         player.healthBar.position.set(
             player.mesh.position.x,
-            player.mesh.position.y + 1.8,
+            player.mesh.position.y + HEALTHBAR_Y,
             player.mesh.position.z
         );
         this.scene.add(player.healthBar);
@@ -190,28 +194,43 @@ export class PlayerManager {
         for (const [userId, player] of this.players) {
             // Smoothly interpolate to target position
             player.mesh.position.lerp(player.targetPos, lerpSpeed * deltaTime);
-            
+
+            // Face the direction of travel while actively moving (server-authoritative
+            // isMoving flag, tracked as serverTarget in addOrUpdatePlayer above).
+            const moving = !!player.serverTarget;
+            if (moving) {
+                const dx = player.targetPos.x - player.mesh.position.x;
+                const dz = player.targetPos.z - player.mesh.position.z;
+                if (dx * dx + dz * dz > 0.0001) {
+                    const targetAngle = Math.atan2(dx, dz);
+                    let da = targetAngle - player.mesh.rotation.y;
+                    da = Math.atan2(Math.sin(da), Math.cos(da));
+                    player.mesh.rotation.y += da * Math.min(1, deltaTime * 10);
+                }
+            }
+            if (player.animator) player.animator.update(deltaTime, moving);
+
             // Update label position
             player.label.position.set(
                 player.mesh.position.x,
-                player.mesh.position.y + 1.2,
+                player.mesh.position.y + LABEL_Y,
                 player.mesh.position.z
             );
-            
+
             // Update health bar position
             if (player.healthBar) {
                 player.healthBar.position.set(
                     player.mesh.position.x,
-                    player.mesh.position.y + 1.8,
+                    player.mesh.position.y + HEALTHBAR_Y,
                     player.mesh.position.z
                 );
             }
-            
+
             // Update chat bubble position if exists
             if (player.chatBubble) {
                 player.chatBubble.position.set(
                     player.mesh.position.x,
-                    player.mesh.position.y + 2.5,
+                    player.mesh.position.y + CHATBUBBLE_Y,
                     player.mesh.position.z
                 );
             }
@@ -223,8 +242,8 @@ export class PlayerManager {
         if (player) {
             this.scene.remove(player.mesh);
             this.scene.remove(player.label);
-            player.mesh.geometry.dispose();
-            player.mesh.material.dispose();
+            // player.mesh's geometries/materials are module-level singletons shared by every
+            // rig (see CharacterRig.js) - intentionally not disposed here.
             player.label.material.map.dispose();
             player.label.material.dispose();
             
@@ -300,7 +319,7 @@ export class PlayerManager {
         player.chatBubble = this.createChatBubble(message);
         player.chatBubble.position.set(
             player.mesh.position.x,
-            player.mesh.position.y + 2.5,
+            player.mesh.position.y + CHATBUBBLE_Y,
             player.mesh.position.z
         );
         this.scene.add(player.chatBubble);
@@ -393,15 +412,13 @@ export class PlayerManager {
         return meshes;
     }
     
-    // Get userId from a mesh that was hit by raycast
+    // Get userId from a mesh that was hit by raycast - the rig is a deep hierarchy now, so
+    // walk all the way up to the root instead of checking just one parent level.
     getUserIdFromMesh(mesh) {
-        // Check the mesh itself
-        if (mesh.userData && mesh.userData.userId) {
-            return mesh.userData.userId;
-        }
-        // Check parent (in case we hit a child object)
-        if (mesh.parent && mesh.parent.userData && mesh.parent.userData.userId) {
-            return mesh.parent.userData.userId;
+        let current = mesh;
+        while (current) {
+            if (current.userData && current.userData.userId) return current.userData.userId;
+            current = current.parent;
         }
         return null;
     }

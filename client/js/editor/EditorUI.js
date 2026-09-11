@@ -1,6 +1,7 @@
 // EditorUI - handles editor interface elements
 import { EditorInput } from './EditorInput.js';
 import { ItemsEditor } from './ItemsEditor.js';
+import { TerrainBuilderUI } from './TerrainBuilderUI.js';
 
 export class EditorUI {
     constructor(editorManager, networkManager) {
@@ -10,12 +11,14 @@ export class EditorUI {
         this.editorInput = null;
         this.itemsEditor = null;
         this.adminToken = null;
-        
+
         this.createUI();
         this.setupEventListeners();
-        
+
         // Initialize input handler after UI is created
         this.editorInput = new EditorInput(editorManager, this);
+
+        this.terrainBuilderUI = new TerrainBuilderUI(editorManager, networkManager, this);
     }
 
     createUI() {
@@ -122,6 +125,9 @@ export class EditorUI {
             <div class="toolbar-group">
                 <button id="tool-items" class="editor-btn" title="Items Editor">
                     📦 Items
+                </button>
+                <button id="tool-terrain" class="editor-btn" title="Terrain Builder">
+                    🗺 Terrain
                 </button>
                 <button id="tool-publish" class="editor-btn primary" title="Publish Room">
                     📤 Publish
@@ -272,6 +278,7 @@ export class EditorUI {
         });
         
         document.getElementById('tool-items')?.addEventListener('click', () => this.toggleItemsEditor());
+        document.getElementById('tool-terrain')?.addEventListener('click', () => this.terrainBuilderUI.open());
         document.getElementById('tool-publish')?.addEventListener('click', () => this.handlePublish());
         document.getElementById('tool-revert')?.addEventListener('click', () => this.handleRevert());
         document.getElementById('tool-exit-editor')?.addEventListener('click', () => this.exitEditorMode());
@@ -340,7 +347,10 @@ export class EditorUI {
         document.getElementById('asset-palette').style.display = 'flex';
         document.getElementById('inspector-panel').style.display = 'flex';
         document.body.classList.add('editor-mode');
-        
+        // scene-container's margins just changed via CSS - the renderer/camera
+        // don't know the container resized until something fires 'resize'
+        window.dispatchEvent(new Event('resize'));
+
         // Auto-refresh assets when entering editor (fix 1a)
         await this.editorManager.loadAssets();
         this.populateAssetPalette();
@@ -353,6 +363,7 @@ export class EditorUI {
         document.getElementById('asset-palette').style.display = 'none';
         document.getElementById('inspector-panel').style.display = 'none';
         document.body.classList.remove('editor-mode');
+        window.dispatchEvent(new Event('resize'));
     }
 
     async exitEditorMode() {
@@ -532,12 +543,17 @@ export class EditorUI {
     
     async handleEditorRoomChange(roomId) {
         if (!roomId) return;
-        
+
         roomId = parseInt(roomId);
-        
+
         // Sync HUD dropdown
         const hudDropdown = document.getElementById('room-dropdown');
         if (hudDropdown) hudDropdown.value = roomId;
+
+        // Sync editor toolbar dropdown too - callers other than its own
+        // change handler (e.g. TerrainBuilderUI) won't have set this already.
+        const editorDropdown = document.getElementById('editor-room-select');
+        if (editorDropdown) editorDropdown.value = roomId;
         
         // Load room for editing
         await this.editorManager.loadRoomForEditing(roomId);
@@ -665,11 +681,11 @@ export class EditorUI {
                 </div>
             </div>
             <div class="inspector-section">
-                <label>Rotation (rad)</label>
+                <label>Rotation (&deg;)</label>
                 <div class="inspector-row">
-                    <input type="number" id="rot-x" value="${(obj.data.rotation.x || 0).toFixed(2)}" step="0.1">
-                    <input type="number" id="rot-y" value="${(obj.data.rotation.y || 0).toFixed(2)}" step="0.1">
-                    <input type="number" id="rot-z" value="${(obj.data.rotation.z || 0).toFixed(2)}" step="0.1">
+                    <input type="number" id="rot-x" value="${((obj.data.rotation.x || 0) * 180 / Math.PI).toFixed(1)}" step="1">
+                    <input type="number" id="rot-y" value="${((obj.data.rotation.y || 0) * 180 / Math.PI).toFixed(1)}" step="1">
+                    <input type="number" id="rot-z" value="${((obj.data.rotation.z || 0) * 180 / Math.PI).toFixed(1)}" step="1">
                 </div>
             </div>
             <div class="inspector-section">
@@ -779,23 +795,35 @@ export class EditorUI {
     applyInspectorChanges(objectId) {
         const obj = this.editorManager.placedObjects.get(objectId);
         if (!obj) return;
-        
+
+        // NaN-safe read: `parseFloat(v) || fallback` looks equivalent but isn't
+        // - it silently replaces a legitimate 0 (e.g. an object placed exactly
+        // at y=0, or rotated back to 0deg) with the fallback, since 0 is falsy.
+        // Only actually-invalid/empty input should fall back.
+        const readNum = (id, fallback) => {
+            const val = parseFloat(document.getElementById(id).value);
+            return Number.isFinite(val) ? val : fallback;
+        };
+        const toRad = (deg) => deg * Math.PI / 180;
+
         const newPos = {
-            x: parseFloat(document.getElementById('pos-x').value) || 0,
-            y: parseFloat(document.getElementById('pos-y').value) || 0.5,
-            z: parseFloat(document.getElementById('pos-z').value) || 0
+            x: readNum('pos-x', 0),
+            y: readNum('pos-y', 0.5),
+            z: readNum('pos-z', 0)
         };
-        
+
+        // Inspector shows/accepts degrees; everything downstream (mesh.rotation,
+        // stored data, published layout) stays in radians as before.
         const newRot = {
-            x: parseFloat(document.getElementById('rot-x').value) || 0,
-            y: parseFloat(document.getElementById('rot-y').value) || 0,
-            z: parseFloat(document.getElementById('rot-z').value) || 0
+            x: toRad(readNum('rot-x', 0)),
+            y: toRad(readNum('rot-y', 0)),
+            z: toRad(readNum('rot-z', 0))
         };
-        
+
         const newScale = {
-            x: parseFloat(document.getElementById('scale-x').value) || 1,
-            y: parseFloat(document.getElementById('scale-y').value) || 1,
-            z: parseFloat(document.getElementById('scale-z').value) || 1
+            x: readNum('scale-x', 1),
+            y: readNum('scale-y', 1),
+            z: readNum('scale-z', 1)
         };
         
         // Multi-select: apply relative offset from primary selected object

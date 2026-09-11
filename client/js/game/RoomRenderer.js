@@ -8,6 +8,7 @@ export class RoomRenderer {
         this.roomObjects = new Map(); // objectId -> mesh
         this.gltfLoader = new GLTFLoader();
         this.currentRoomId = null;
+        this.neighborGroups = new Map(); // roomId -> THREE.Group (visual-only chunk neighbors)
     }
 
     // Load and render a room layout
@@ -150,6 +151,72 @@ export class RoomRenderer {
                 }
             }
         });
+    }
+
+    // Render neighboring chunks purely for visual continuity - no
+    // interaction, no click-to-move target (Game.getGround() still only ever
+    // returns the current room's own ground mesh, so movement/interaction
+    // raycasts are unaffected by any of this). `entries` is
+    // [{roomId, offsetX, offsetZ, layout}], one per neighboring chunk within
+    // ChunkStreamer's load radius that actually exists and is published.
+    // Each chunk's objects use the exact same local positions as when it's
+    // the current room - the offset is applied once, on the wrapping Group,
+    // via Three.js parent/child transforms, rather than per-object math.
+    loadNeighbors(entries) {
+        this.clearNeighbors();
+
+        for (const { roomId, offsetX, offsetZ, layout } of entries) {
+            const group = new THREE.Group();
+            group.position.set(offsetX, 0, offsetZ);
+            group.add(this.createGroundTile());
+
+            for (const objData of layout?.objects || []) {
+                const mesh = this.createMeshFromData(objData);
+                if (!mesh) continue;
+                mesh.position.set(objData.position.x, objData.position.y, objData.position.z);
+                if (objData.rotation) {
+                    mesh.rotation.set(objData.rotation.x || 0, objData.rotation.y || 0, objData.rotation.z || 0);
+                }
+                if (objData.scale) {
+                    mesh.scale.set(objData.scale.x || 1, objData.scale.y || 1, objData.scale.z || 1);
+                }
+                group.add(mesh);
+            }
+
+            this.scene.add(group);
+            this.neighborGroups.set(roomId, group);
+        }
+    }
+
+    // Ground plane + grid, matching Game.js's setupGround() exactly so a
+    // neighboring chunk's terrain looks continuous with the current room's.
+    createGroundTile() {
+        const tile = new THREE.Group();
+
+        const groundGeometry = new THREE.PlaneGeometry(50, 50);
+        const groundMaterial = new THREE.MeshStandardMaterial({
+            color: 0x3d9140,
+            roughness: 0.8,
+            metalness: 0.1
+        });
+        const ground = new THREE.Mesh(groundGeometry, groundMaterial);
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        tile.add(ground);
+
+        const gridHelper = new THREE.GridHelper(50, 50, 0x2d6a30, 0x2d6a30);
+        gridHelper.position.y = 0.01;
+        tile.add(gridHelper);
+
+        return tile;
+    }
+
+    clearNeighbors() {
+        for (const group of this.neighborGroups.values()) {
+            this.scene.remove(group);
+            this.disposeMesh(group);
+        }
+        this.neighborGroups.clear();
     }
 
     // Handle room layout updates (from server)
